@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.4.5 — 2026-09-11
+
+- Renamed the settings-page section heading to the neutral `General` label required by the Obsidian review guidelines.
+- Rebuilt the public runtime with the corrected 3.4.5 manifest and live billing catalog.
+
 ## 3.4.4 — 2026-09-11
 
 - Renamed the settings-page heading to the generic `Settings` label required by the Obsidian review guidelines.

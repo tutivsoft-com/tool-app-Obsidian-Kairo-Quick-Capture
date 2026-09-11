@@ -648,7 +648,7 @@ var KairoSettingTab = class extends import_obsidian2.PluginSettingTab {
   display() {
     const { containerEl } = this;
     containerEl.empty();
-    new import_obsidian2.Setting(containerEl).setName("Settings").setHeading();
+    new import_obsidian2.Setting(containerEl).setName("General").setHeading();
     containerEl.createEl("p", { text: "Local-first capture. The optional Electron shortcut is active while Obsidian is running; the Obsidian command hotkey is always available as a fallback." });
     new import_obsidian2.Setting(containerEl).setName("Billing & usage").setHeading();
     containerEl.createEl("p", { text: "Each capture uses 1 credit. New installs get 3 free captures per local calendar day. Paid packs are one-time purchases: $1 for 100 uses or $10 for 1,000 uses." });
