@@ -14,7 +14,7 @@ Kairo is a local-first Obsidian scratchpad for capturing fleeting thoughts quick
 
 ## Install
 
-1. Download `main.js`, `manifest.json`, and `styles.css` from the [3.4.2 release](https://github.com/tutivsoft-com/tool-app-Obsidian-Kairo-Quick-Capture/releases/tag/3.4.2).
+1. Download `main.js`, `manifest.json`, and `styles.css` from the [3.4.3 release](https://github.com/tutivsoft-com/tool-app-Obsidian-Kairo-Quick-Capture/releases/tag/3.4.3).
 2. Copy them into `<vault>/.obsidian/plugins/kairo-quick-capture/`.
 3. Enable **Kairo Quick Capture** in Obsidian's Community plugins settings.
 
