@@ -1,6 +1,6 @@
 # Kairo Quick Capture — Product Requirements
 
-Status: implemented — 3.4.3 billing/live-catalog release
+Status: implemented — 3.4.4 billing/live-catalog release
 
 ## Product promise
 
