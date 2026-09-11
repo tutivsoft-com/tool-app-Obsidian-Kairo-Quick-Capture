@@ -1,0 +1,22 @@
+name: Release attestation
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+  id-token: write
+  attestations: write
+
+jobs:
+  attest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            publish/main.js
+            publish/manifest.json
+            publish/styles.css

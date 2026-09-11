@@ -1,0 +1,10 @@
+{
+  "id": "kairo-quick-capture",
+  "name": "Kairo Quick Capture",
+  "version": "3.3.0",
+  "minAppVersion": "1.5.0",
+  "description": "Capture fleeting thoughts quickly and deliver them safely to an inbox or daily note.",
+  "author": "Rahul",
+  "authorUrl": "https://github.com/tutivsoft-com",
+  "isDesktopOnly": true
+}
