@@ -1,6 +1,6 @@
 # Kairo Quick Capture — Product Requirements
 
-Status: implemented — 3.3.0 MVP released
+Status: implemented — 3.4.2 billing/live-catalog release
 
 ## Product promise
 
@@ -58,6 +58,15 @@ Kairo lets a user capture a thought in seconds from anywhere on the desktop, eve
 22. Never place passwords, API keys, or sensitive diagnostics in capture files or logs.
 23. Provide a visible error with a copyable diagnostic summary without exposing captured text by default.
 
+### Billing and usage
+
+24. Allow 3 free captures per local calendar day, resetting from the local calendar date.
+25. After the free allowance, require 1 purchased credit for each accepted capture.
+26. Offer one-time packs of $1 for 100 uses and $10 for 1,000 uses through Constance's unsigned browser-relay checkout and credit endpoints.
+27. Keep the Constance app id exactly `kairo-quick-capture`; do not put shared signing secrets in the plugin.
+28. Use a stable idempotency event id for each spend attempt and never charge queued-capture retries again.
+29. Keep the real catalog price ids synchronized in source and publish, and fail closed for confirmed exhaustion while preserving local capture during transient billing outages.
+
 ## Optional AI features
 
 AI is not part of the capture path or required for the MVP. A later opt-in assistant may:
@@ -92,4 +101,6 @@ AI must run only after the capture is safely stored, require an explicit per-cap
 - Captures made while Obsidian is closed are delivered after the vault becomes available.
 - A failed write leaves the complete text in a recoverable queue.
 - Repeated retries never create duplicate entries.
+- Three captures are free each local calendar day; later accepted captures consume one purchased use each.
+- Concurrent captures do not overspend local allowances or duplicate a server credit spend.
 - The MVP remains fully useful with AI disabled and without an internet connection.

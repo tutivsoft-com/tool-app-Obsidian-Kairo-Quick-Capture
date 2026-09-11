@@ -17,6 +17,6 @@ jobs:
       - uses: actions/attest-build-provenance@v2
         with:
           subject-path: |
-            publish/main.js
-            publish/manifest.json
-            publish/styles.css
+            main.js
+            manifest.json
+            styles.css
