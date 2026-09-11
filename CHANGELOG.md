@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.4.6 — 2026-09-11
+
+- Removed the optional settings-page section heading after Obsidian review disallowed generic heading labels there.
+- Rebuilt the public runtime with the corrected 3.4.6 manifest and live billing catalog.
+
 ## 3.4.5 — 2026-09-11
 
 - Renamed the settings-page section heading to the neutral `General` label required by the Obsidian review guidelines.

@@ -27,7 +27,7 @@ import {
   syncPurchasedUses,
 } from "./src/billing";
 
-const VERSION = "3.4.5";
+const VERSION = "3.4.6";
 const DEFAULT_TEMPLATE = "- {{time}} — {{text}}\n";
 const DEFAULT_SETTINGS: KairoSettings = {
   shortcut: "Ctrl+Shift+Space",
@@ -479,7 +479,6 @@ class KairoSettingTab extends PluginSettingTab {
   display(): void {
     const { containerEl } = this;
     containerEl.empty();
-    new Setting(containerEl).setName("General").setHeading();
     containerEl.createEl("p", { text: "Local-first capture. The optional Electron shortcut is active while Obsidian is running; the Obsidian command hotkey is always available as a fallback." });
 
     new Setting(containerEl).setName("Billing & usage").setHeading();
