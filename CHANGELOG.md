@@ -3,10 +3,6 @@
 ## 3.4.7 - 2026-09-12
 
 - Incremented and synchronized the canonical, package, manifest, and publish version surfaces after the billing rollout. No runtime behavior changed in this metadata release.
-
-
-## Unreleased — 2026-09-12
-
 - Restored the publish entrypoint re-export and rebuilt the public mirror.
 - Added regression coverage confirming retries reuse the durable capture event
   ID and request body.
