@@ -2,28 +2,34 @@
 
 ## 3.4.7 - 2026-09-12
 
-- Synchronized the public mirror's canonical, package, lockfile, and manifest version surfaces after the billing rollout. No runtime behavior changed.
+- Incremented and synchronized the canonical, package, manifest, and publish version surfaces after the billing rollout. No runtime behavior changed in this metadata release.
 
+
+## Unreleased — 2026-09-12
+
+- Restored the publish entrypoint re-export and rebuilt the public mirror.
+- Added regression coverage confirming retries reuse the durable capture event
+  ID and request body.
 
 ## 3.4.6 — 2026-09-11
 
 - Removed the optional settings-page section heading after Obsidian review disallowed generic heading labels there.
-- Rebuilt the public runtime with the corrected 3.4.6 manifest and live billing catalog.
+- Rebuilt the public runtime mirror with the corrected 3.4.6 manifest and live billing catalog.
 
 ## 3.4.5 — 2026-09-11
 
 - Renamed the settings-page section heading to the neutral `General` label required by the Obsidian review guidelines.
-- Rebuilt the public runtime with the corrected 3.4.5 manifest and live billing catalog.
+- Rebuilt the public runtime mirror with the corrected 3.4.5 manifest and live billing catalog.
 
 ## 3.4.4 — 2026-09-11
 
 - Renamed the settings-page heading to the generic `Settings` label required by the Obsidian review guidelines.
-- Rebuilt the public runtime with the corrected 3.4.4 manifest and live billing catalog.
+- Rebuilt the public runtime mirror with the corrected 3.4.4 manifest and live billing catalog.
 
 ## 3.4.3 — 2026-09-11
 
 - Fixed the Obsidian review blocker by using the supported `Setting.setHeading()` API for the settings-page title.
-- Rebuilt the public runtime with the corrected 3.4.3 manifest and live billing catalog.
+- Rebuilt the public runtime mirror with the corrected 3.4.3 manifest and live billing catalog.
 
 ## 3.4.2 — 2026-09-11
 

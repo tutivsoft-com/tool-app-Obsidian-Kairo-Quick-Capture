@@ -12,10 +12,10 @@ Kairo is a local-first Obsidian scratchpad for capturing fleeting thoughts quick
 - Provides a first-run setup flow, queue viewer, copyable non-content diagnostics, and optional launch-at-login.
 - Includes optional one-time billing: 3 free captures per local calendar day, then 1 credit per accepted capture.
 
-## Install
+## Install for development
 
-1. Download `main.js`, `manifest.json`, and `styles.css` from the [3.4.7 release](https://github.com/tutivsoft-com/tool-app-Obsidian-Kairo-Quick-Capture/releases/tag/3.4.6).
-2. Copy them into `<vault>/.obsidian/plugins/kairo-quick-capture/`.
+1. Run `npm install` and `npm run build`.
+2. Copy `publish/main.js`, `publish/manifest.json`, and `publish/styles.css` into `<vault>/.obsidian/plugins/kairo-quick-capture/`.
 3. Enable **Kairo Quick Capture** in Obsidian's Community plugins settings.
 
 The plugin is desktop-only because the optional global accelerator and launch-at-login integrations use Electron when available. The normal Obsidian command remains available if an operating system rejects the accelerator.
