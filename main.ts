@@ -24,10 +24,11 @@ import {
   generateSecureDeviceId,
   normalizeBillingSettings,
   openBuyCheckout,
+  retryPendingSpendEvents,
   syncPurchasedUses,
 } from "./src/billing";
 
-const VERSION = "3.4.6";
+const VERSION = "3.4.7";
 const DEFAULT_TEMPLATE = "- {{time}} — {{text}}\n";
 const DEFAULT_SETTINGS: KairoSettings = {
   shortcut: "Ctrl+Shift+Space",
@@ -47,6 +48,7 @@ const DEFAULT_SETTINGS: KairoSettings = {
   freeUsesRemaining: 3,
   freeUsesDay: currentDayKey(),
   purchasedUses: 0,
+  pendingSpendEvents: [],
 };
 
 export interface KairoSettings {
@@ -67,6 +69,7 @@ export interface KairoSettings {
   freeUsesRemaining: number;
   freeUsesDay: string;
   purchasedUses: number;
+  pendingSpendEvents: Array<{ eventId: string; amount: number }>;
 }
 
 interface QueuedCapture {
@@ -139,7 +142,7 @@ export default class KairoQuickCapturePlugin extends Plugin {
     this.app.workspace.onLayoutReady(() => {
       this.registerGlobalShortcut();
       void this.flushQueue(false);
-      void syncPurchasedUses(this);
+      void syncPurchasedUses(this).then(() => retryPendingSpendEvents(this));
       if (!this.settings.setupCompleted) window.setTimeout(() => new SetupModal(this.app, this).open(), 500);
     });
   }

@@ -16,6 +16,7 @@ export interface BillingSettings {
   freeUsesRemaining: number;
   freeUsesDay: string;
   purchasedUses: number;
+  pendingSpendEvents: Array<{ eventId: string; amount: number }>;
 }
 
 export type SpendResult =
@@ -84,6 +85,9 @@ export function normalizeBillingSettings(settings: BillingSettings, date = new D
   settings.purchasedUses = Number.isFinite(settings.purchasedUses)
     ? Math.max(0, Math.trunc(settings.purchasedUses))
     : 0;
+  settings.pendingSpendEvents = Array.isArray(settings.pendingSpendEvents)
+    ? settings.pendingSpendEvents.filter((item) => item && typeof item.eventId === "string" && Number.isInteger(item.amount) && item.amount > 0)
+    : [];
   if (typeof settings.freeUsesDay !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(settings.freeUsesDay)) {
     settings.freeUsesDay = currentDayKey(date);
     settings.freeUsesRemaining = FREE_USES_PER_DAY;
@@ -132,6 +136,16 @@ export async function syncPurchasedUses(plugin: BillingPlugin): Promise<void> {
   });
 }
 
+export async function retryPendingSpendEvents(plugin: BillingPlugin): Promise<void> {
+  for (const pending of [...(plugin.settings.pendingSpendEvents ?? [])]) {
+    const result = await spendConstanceUse(plugin.settings.constanceDeviceId, pending.eventId);
+    if (result.kind === "error") break;
+    plugin.settings.pendingSpendEvents = plugin.settings.pendingSpendEvents.filter((item) => item.eventId !== pending.eventId);
+    plugin.settings.purchasedUses = result.kind === "ok" ? result.balance : 0;
+    await plugin.persist();
+  }
+}
+
 export async function spendConstanceUse(deviceId: string, eventId = generateEventId()): Promise<SpendResult> {
   if (!deviceId) return { kind: "error" };
   for (let attempt = 0; attempt < 2; attempt += 1) {
@@ -166,14 +180,24 @@ export async function consumeCaptureUse(plugin: BillingPlugin, eventId = generat
       return true;
     }
 
+    plugin.settings.pendingSpendEvents = plugin.settings.pendingSpendEvents ?? [];
+    await retryPendingSpendEvents(plugin);
+    if (plugin.settings.pendingSpendEvents.length > 0) {
+      new Notice("Kairo: a previous capture spend is still being reconciled. Try again when the connection is restored.");
+      return false;
+    }
+    plugin.settings.pendingSpendEvents.push({ eventId, amount: 1 });
+    await plugin.persist();
     const result = await spendConstanceUse(plugin.settings.constanceDeviceId, eventId);
     if (result.kind === "ok") {
       plugin.settings.purchasedUses = result.balance;
+      plugin.settings.pendingSpendEvents = plugin.settings.pendingSpendEvents.filter((item) => item.eventId !== eventId);
       await plugin.persist();
       return true;
     }
     if (result.kind === "insufficient") {
       plugin.settings.purchasedUses = 0;
+      plugin.settings.pendingSpendEvents = plugin.settings.pendingSpendEvents.filter((item) => item.eventId !== eventId);
       await plugin.persist();
       new Notice("Kairo: no uses remain. Buy a use pack in plugin settings.");
       return false;
@@ -184,7 +208,7 @@ export async function consumeCaptureUse(plugin: BillingPlugin, eventId = generat
     // online sync reconciles the purchased-use display mirror. The mirror is
     // never spent locally: every post-free capture must reach Constance so a
     // server credit cannot be reused after a balance refresh.
-    console.warn("Kairo: billing unavailable; allowing local capture and reconciling later.");
+    console.warn("Kairo: billing status is unknown; capture is allowed once and the persisted event will be reconciled before another paid capture.");
     return true;
   });
 }

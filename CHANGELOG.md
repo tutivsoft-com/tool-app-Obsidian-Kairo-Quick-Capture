@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.4.7 - 2026-09-12
+
+- Synchronized the public mirror's canonical, package, lockfile, and manifest version surfaces after the billing rollout. No runtime behavior changed.
+
+
 ## 3.4.6 — 2026-09-11
 
 - Removed the optional settings-page section heading after Obsidian review disallowed generic heading labels there.

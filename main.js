@@ -115,6 +115,7 @@ function normalizeBillingSettings(settings, date = /* @__PURE__ */ new Date()) {
   settings.billingEmail = typeof settings.billingEmail === "string" ? settings.billingEmail : "";
   settings.freeUsesRemaining = Number.isFinite(settings.freeUsesRemaining) ? Math.max(0, Math.min(FREE_USES_PER_DAY, Math.trunc(settings.freeUsesRemaining))) : FREE_USES_PER_DAY;
   settings.purchasedUses = Number.isFinite(settings.purchasedUses) ? Math.max(0, Math.trunc(settings.purchasedUses)) : 0;
+  settings.pendingSpendEvents = Array.isArray(settings.pendingSpendEvents) ? settings.pendingSpendEvents.filter((item) => item && typeof item.eventId === "string" && Number.isInteger(item.amount) && item.amount > 0) : [];
   if (typeof settings.freeUsesDay !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(settings.freeUsesDay)) {
     settings.freeUsesDay = currentDayKey(date);
     settings.freeUsesRemaining = FREE_USES_PER_DAY;
@@ -159,6 +160,16 @@ async function syncPurchasedUses(plugin) {
     }
   });
 }
+async function retryPendingSpendEvents(plugin) {
+  var _a;
+  for (const pending of [...(_a = plugin.settings.pendingSpendEvents) != null ? _a : []]) {
+    const result = await spendConstanceUse(plugin.settings.constanceDeviceId, pending.eventId);
+    if (result.kind === "error") break;
+    plugin.settings.pendingSpendEvents = plugin.settings.pendingSpendEvents.filter((item) => item.eventId !== pending.eventId);
+    plugin.settings.purchasedUses = result.kind === "ok" ? result.balance : 0;
+    await plugin.persist();
+  }
+}
 async function spendConstanceUse(deviceId, eventId = generateEventId()) {
   var _a, _b, _c;
   if (!deviceId) return { kind: "error" };
@@ -187,24 +198,35 @@ async function spendConstanceUse(deviceId, eventId = generateEventId()) {
 }
 async function consumeCaptureUse(plugin, eventId = generateEventId()) {
   return withBillingLock(plugin, async () => {
+    var _a;
     const localUse = consumeLocalUse(plugin.settings);
     if (localUse !== "none") {
       await plugin.persist();
       return true;
     }
+    plugin.settings.pendingSpendEvents = (_a = plugin.settings.pendingSpendEvents) != null ? _a : [];
+    await retryPendingSpendEvents(plugin);
+    if (plugin.settings.pendingSpendEvents.length > 0) {
+      new import_obsidian.Notice("Kairo: a previous capture spend is still being reconciled. Try again when the connection is restored.");
+      return false;
+    }
+    plugin.settings.pendingSpendEvents.push({ eventId, amount: 1 });
+    await plugin.persist();
     const result = await spendConstanceUse(plugin.settings.constanceDeviceId, eventId);
     if (result.kind === "ok") {
       plugin.settings.purchasedUses = result.balance;
+      plugin.settings.pendingSpendEvents = plugin.settings.pendingSpendEvents.filter((item) => item.eventId !== eventId);
       await plugin.persist();
       return true;
     }
     if (result.kind === "insufficient") {
       plugin.settings.purchasedUses = 0;
+      plugin.settings.pendingSpendEvents = plugin.settings.pendingSpendEvents.filter((item) => item.eventId !== eventId);
       await plugin.persist();
       new import_obsidian.Notice("Kairo: no uses remain. Buy a use pack in plugin settings.");
       return false;
     }
-    console.warn("Kairo: billing unavailable; allowing local capture and reconciling later.");
+    console.warn("Kairo: billing status is unknown; capture is allowed once and the persisted event will be reconciled before another paid capture.");
     return true;
   });
 }
@@ -244,7 +266,8 @@ var DEFAULT_SETTINGS = {
   billingEmail: "",
   freeUsesRemaining: 3,
   freeUsesDay: currentDayKey(),
-  purchasedUses: 0
+  purchasedUses: 0,
+  pendingSpendEvents: []
 };
 var DestinationChangedError = class extends Error {
   constructor() {
@@ -294,7 +317,7 @@ var KairoQuickCapturePlugin = class extends import_obsidian2.Plugin {
     this.app.workspace.onLayoutReady(() => {
       this.registerGlobalShortcut();
       void this.flushQueue(false);
-      void syncPurchasedUses(this);
+      void syncPurchasedUses(this).then(() => retryPendingSpendEvents(this));
       if (!this.settings.setupCompleted) window.setTimeout(() => new SetupModal(this.app, this).open(), 500);
     });
   }

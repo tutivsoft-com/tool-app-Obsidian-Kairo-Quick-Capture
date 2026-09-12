@@ -95,7 +95,7 @@ test("each post-free capture spends against the server mirror", async () => {
     const balance = 10 - requests.length;
     return { status: 200, json: { data: { credits: { balance } } } };
   };
-  const settings = { constanceDeviceId: "device-1", billingEmail: "", freeUsesRemaining: 0, freeUsesDay: "2026-09-11", purchasedUses: 10 };
+  const settings = { constanceDeviceId: "device-1", billingEmail: "", freeUsesRemaining: 0, freeUsesDay: billing.currentDayKey(), purchasedUses: 10 };
   const plugin = { settings, async persist() {} };
   try {
     assert.equal(await billing.consumeCaptureUse(plugin, "evt-paid-1"), true);
