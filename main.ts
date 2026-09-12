@@ -28,7 +28,7 @@ import {
   syncPurchasedUses,
 } from "./src/billing";
 
-const VERSION = "3.4.7";
+const VERSION = "3.4.8";
 const DEFAULT_TEMPLATE = "- {{time}} — {{text}}\n";
 const DEFAULT_SETTINGS: KairoSettings = {
   shortcut: "Ctrl+Shift+Space",
