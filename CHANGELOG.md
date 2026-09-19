@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.4.8 - 2026-09-20
+
+- Synchronized the Kairo source and publish version surfaces and prepared the
+  next source-inclusive TutivSoft release.
+
 ## 3.4.7 - 2026-09-12
 
 - Incremented and synchronized the canonical, package, manifest, and publish version surfaces after the billing rollout. No runtime behavior changed in this metadata release.
