@@ -3,6 +3,7 @@ name: Release attestation
 on:
   release:
     types: [published]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -17,6 +18,6 @@ jobs:
       - uses: actions/attest-build-provenance@v2
         with:
           subject-path: |
-            publish/main.js
-            publish/manifest.json
-            publish/styles.css
+            main.js
+            manifest.json
+            styles.css
