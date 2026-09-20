@@ -27,6 +27,8 @@ import {
   retryPendingSpendEvents,
   syncPurchasedUses,
 } from "./src/billing";
+import { PluginSupport } from "./src/plugin-support";
+import { addBillingAccountSettings } from "./src/constance-account";
 
 const VERSION = "3.4.8";
 const DEFAULT_TEMPLATE = "- {{time}} — {{text}}\n";
@@ -45,6 +47,8 @@ const DEFAULT_SETTINGS: KairoSettings = {
   setupCompleted: false,
   constanceDeviceId: "",
   billingEmail: "",
+  billingAccessToken: "",
+  billingAccountLinked: false,
   freeUsesRemaining: 3,
   freeUsesDay: currentDayKey(),
   purchasedUses: 0,
@@ -66,6 +70,8 @@ export interface KairoSettings {
   setupCompleted: boolean;
   constanceDeviceId: string;
   billingEmail: string;
+  billingAccessToken: string;
+  billingAccountLinked: boolean;
   freeUsesRemaining: number;
   freeUsesDay: string;
   purchasedUses: number;
@@ -99,6 +105,7 @@ type ElectronRequire = (moduleName: string) => {
 };
 
 export default class KairoQuickCapturePlugin extends Plugin {
+  support!: PluginSupport;
   settings: KairoSettings = { ...DEFAULT_SETTINGS };
   queue: QueuedCapture[] = [];
   private globalShortcut?: string;
@@ -108,6 +115,8 @@ export default class KairoQuickCapturePlugin extends Plugin {
   private queueFlushPromise?: Promise<void>;
 
   async onload(): Promise<void> {
+    this.support = new PluginSupport(this, { name: "Kairo Quick Capture", summary: "Capture ideas quickly to an inbox or daily note, including while the target is unavailable.", quickStart: ["Sign in to billing in Settings.", "Run Quick capture.", "Type the capture and submit; Kairo chooses the configured default destination."], commands: ["Quick capture", "Show capture queue", "Flush queue"], troubleshooting: ["Use Copy debug log before reporting a problem.", "Check the configured destination when queued captures do not flush."] });
+    this.support.start();
     const data = (await this.loadData()) as Partial<KairoData> | null;
     this.settings = { ...DEFAULT_SETTINGS, ...(data?.settings ?? {}) };
     this.queue = Array.isArray(data?.queue) ? data.queue : [];
@@ -485,10 +494,18 @@ class KairoSettingTab extends PluginSettingTab {
     containerEl.createEl("p", { text: "Local-first capture. The optional Electron shortcut is active while Obsidian is running; the Obsidian command hotkey is always available as a fallback." });
 
     new Setting(containerEl).setName("Billing & usage").setHeading();
-    containerEl.createEl("p", { text: "Each capture uses 1 credit. New installs get 3 free captures per local calendar day. Paid packs are one-time purchases: $1 for 100 uses or $10 for 1,000 uses." });
+    containerEl.createEl("p", { text: "Each capture uses 1 credit. Billing accounts get 3 free captures per UTC day across all linked installations. Paid packs are one-time purchases: $1 for 100 uses or $10 for 1,000 uses." });
     this.usageSummaryEl = containerEl.createEl("p", { cls: "kairo-usage-summary", attr: { role: "status", "aria-live": "polite" } });
     this.renderUsageSummary();
-    new Setting(containerEl).setName("Billing email").setDesc("Used only for the Paddle receipt. It is not used to identify local captures.").addText((text) => text.setPlaceholder("you@example.com").setValue(this.plugin.settings.billingEmail).onChange(async (value) => { this.plugin.settings.billingEmail = value.trim(); await this.plugin.persist(); }));
+    addBillingAccountSettings(containerEl, {
+      state: this.plugin.settings,
+      appId: "kairo-quick-capture",
+      installationId: this.plugin.settings.constanceDeviceId,
+      appVersion: this.plugin.manifest.version,
+      persist: () => this.plugin.persist(),
+      syncBalance: () => syncPurchasedUses(this.plugin),
+      refresh: () => this.display(),
+    });
     new Setting(containerEl).setName("Buy capture uses").setDesc("Opens TutivSoft Constance checkout in your browser. Purchases are one-time and linked to this installation.").addButton((button) => button.setButtonText("Buy $1 · 100 uses").onClick(() => openBuyCheckout(this.plugin, "usd_001"))).addButton((button) => button.setButtonText("Buy $10 · 1,000 uses").setCta().onClick(() => openBuyCheckout(this.plugin, "usd_010")));
     new Setting(containerEl).setName("Refresh purchased balance").setDesc("Pull the latest purchased-use balance from Constance.").addButton((button) => button.setButtonText("Refresh").onClick(async () => { button.setDisabled(true); await syncPurchasedUses(this.plugin); this.renderUsageSummary(); button.setDisabled(false); }));
 
@@ -512,6 +529,7 @@ class KairoSettingTab extends PluginSettingTab {
     if (!this.usageSummaryEl) return;
     normalizeBillingSettings(this.plugin.settings);
     const total = this.plugin.settings.freeUsesRemaining + this.plugin.settings.purchasedUses;
-    this.usageSummaryEl.setText(`Uses remaining: ${total.toLocaleString()} (${this.plugin.settings.freeUsesRemaining} free today + ${this.plugin.settings.purchasedUses.toLocaleString()} purchased)`);
+    const account = this.plugin.settings.billingAccountLinked ? "account linked" : "sign in required";
+    this.usageSummaryEl.setText(`Uses remaining: ${total.toLocaleString()} (${this.plugin.settings.freeUsesRemaining} free today + ${this.plugin.settings.purchasedUses.toLocaleString()} purchased; ${account})`);
   }
 }

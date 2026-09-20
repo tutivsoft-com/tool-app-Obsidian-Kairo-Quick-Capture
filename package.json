@@ -1,6 +1,6 @@
 {
   "name": "kairo-quick-capture",
-  "version": "3.4.9",
+  "version": "3.4.10",
   "description": "Fast, local-first scratchpad capture for Obsidian.",
   "main": "main.js",
   "scripts": {
@@ -10,7 +10,12 @@
     "test": "node --test tests/*.test.mjs",
     "check:release": "node scripts/check-release.mjs"
   },
-  "keywords": ["obsidian", "capture", "inbox", "productivity"],
+  "keywords": [
+    "obsidian",
+    "capture",
+    "inbox",
+    "productivity"
+  ],
   "author": "Rahul",
   "license": "MIT",
   "devDependencies": {

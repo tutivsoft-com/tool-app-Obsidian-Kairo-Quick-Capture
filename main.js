@@ -24,11 +24,9 @@ __export(main_exports, {
   default: () => KairoQuickCapturePlugin
 });
 module.exports = __toCommonJS(main_exports);
+var import_obsidian4 = require("obsidian");
 
-// main.ts
-var import_obsidian2 = require("obsidian");
-
-// src/core.ts
+// publish/src/core.ts
 function formatTimestamp(date, format) {
   const pad = (value) => String(value).padStart(2, "0");
   const replacements = {
@@ -68,8 +66,153 @@ function diagnosticSummary(destination, error, queueId) {
   return `Kairo could not deliver capture ${queueId}. Destination: ${destination}. Reason: ${message}`;
 }
 
-// src/billing.ts
+// publish/src/billing.ts
+var import_obsidian2 = require("obsidian");
+
+// publish/src/constance-account.ts
 var import_obsidian = require("obsidian");
+var CONSTANCE_ACCOUNT_BASE_URL = "https://app.tutivsoft.com";
+function errorDetail(response, fallback) {
+  var _a, _b;
+  return String(((_a = response.json) == null ? void 0 : _a.detail) || ((_b = response.json) == null ? void 0 : _b.message) || response.text || fallback);
+}
+async function authenticate(mode, email, password, installationId) {
+  var _a;
+  const body = mode === "register" ? { email, password, external_customer_id: installationId } : { email, password };
+  const response = await (0, import_obsidian.requestUrl)({
+    url: `${CONSTANCE_ACCOUNT_BASE_URL}/api/v1/auth/${mode}`,
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+    throw: false
+  });
+  if (response.status < 200 || response.status >= 300) {
+    throw new Error(errorDetail(response, `Billing ${mode} failed (HTTP ${response.status})`));
+  }
+  const token = String(((_a = response.json) == null ? void 0 : _a.access_token) || "");
+  if (!token) throw new Error("Constance did not return an account token.");
+  return token;
+}
+async function linkInstallation(adapter, token) {
+  const response = await (0, import_obsidian.requestUrl)({
+    url: `${CONSTANCE_ACCOUNT_BASE_URL}/api/v1/billing/installations/link`,
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    body: JSON.stringify({
+      app_id: adapter.appId,
+      installation_id: adapter.installationId,
+      legacy_external_customer_id: adapter.installationId,
+      platform: "obsidian",
+      app_version: adapter.appVersion || void 0
+    }),
+    throw: false
+  });
+  if (response.status < 200 || response.status >= 300) {
+    throw new Error(errorDetail(response, `Installation link failed (HTTP ${response.status})`));
+  }
+}
+async function signInBillingAccount(adapter, password, mode) {
+  const email = adapter.state.billingEmail.trim().toLowerCase();
+  if (!email || !email.includes("@")) throw new Error("Enter a valid billing email.");
+  if (password.length < 8) throw new Error("Password must contain at least 8 characters.");
+  if (!adapter.installationId) throw new Error("The plugin installation ID is not ready.");
+  const token = await authenticate(mode, email, password, adapter.installationId);
+  await linkInstallation(adapter, token);
+  adapter.state.billingEmail = email;
+  adapter.state.billingAccessToken = token;
+  adapter.state.billingAccountLinked = true;
+  await adapter.persist();
+  await adapter.syncBalance();
+}
+async function claimAccountFreeUsage(state, appId, installationId, eventId, amount) {
+  var _a, _b;
+  if (!state.billingAccessToken || !state.billingAccountLinked) return { kind: "auth-required" };
+  try {
+    const response = await (0, import_obsidian.requestUrl)({
+      url: `${CONSTANCE_ACCOUNT_BASE_URL}/api/v1/billing/free-usage/claim`,
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${state.billingAccessToken}` },
+      body: JSON.stringify({ app_id: appId, installation_id: installationId, event_id: eventId, amount }),
+      throw: false
+    });
+    if (response.status === 402) return { kind: "insufficient" };
+    if (response.status === 401 || response.status === 403 || response.status === 404) return { kind: "auth-required" };
+    if (response.status < 200 || response.status >= 300) return { kind: "error" };
+    return { kind: "ok", remaining: Math.max(0, Number((_b = (_a = response.json) == null ? void 0 : _a.data) == null ? void 0 : _b.remaining) || 0) };
+  } catch (error) {
+    console.error("Constance account free-usage claim failed", error);
+    return { kind: "error" };
+  }
+}
+async function spendAccountCredits(state, appId, installationId, eventId, amount) {
+  var _a, _b, _c;
+  if (!state.billingAccessToken || !state.billingAccountLinked) return { kind: "auth-required" };
+  try {
+    const response = await (0, import_obsidian.requestUrl)({
+      url: `${CONSTANCE_ACCOUNT_BASE_URL}/api/v1/billing/credits/spend`,
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${state.billingAccessToken}` },
+      body: JSON.stringify({ app_id: appId, installation_id: installationId, event_id: eventId, amount }),
+      throw: false
+    });
+    if (response.status === 402) return { kind: "insufficient" };
+    if (response.status === 401 || response.status === 403 || response.status === 404) return { kind: "auth-required" };
+    if (response.status < 200 || response.status >= 300) return { kind: "error" };
+    const balance = Number((_c = (_b = (_a = response.json) == null ? void 0 : _a.data) == null ? void 0 : _b.credits) == null ? void 0 : _c.balance);
+    return Number.isFinite(balance) ? { kind: "ok", balance: Math.max(0, balance) } : { kind: "error" };
+  } catch (error) {
+    console.error("Constance authenticated credit spend failed", error);
+    return { kind: "error" };
+  }
+}
+function addBillingAccountSettings(containerEl, adapter) {
+  let password = "";
+  new import_obsidian.Setting(containerEl).setName("Billing account email").setDesc("Used for sign-in, purchase restore, and checkout. Reinstalling no longer creates a new free allowance.").addText((text) => text.setPlaceholder("you@example.com").setValue(adapter.state.billingEmail).onChange(async (value) => {
+    adapter.state.billingEmail = value.trim();
+    await adapter.persist();
+  }));
+  new import_obsidian.Setting(containerEl).setName("Billing account password").setDesc("Used only for this sign-in request. The password is never saved by the plugin.").addText((text) => {
+    text.inputEl.type = "password";
+    text.setPlaceholder("At least 8 characters").onChange((value) => {
+      password = value;
+    });
+  });
+  const status = adapter.state.billingAccountLinked ? "Signed in and linked" : "Not signed in";
+  new import_obsidian.Setting(containerEl).setName("Billing account").setDesc(`${status}. The saved bearer session can restore purchases; your password is not stored.`).addButton((button) => button.setButtonText("Sign in").onClick(async () => {
+    var _a;
+    button.setDisabled(true);
+    try {
+      await signInBillingAccount(adapter, password, "login");
+      new import_obsidian.Notice("Billing account signed in and this installation was linked.");
+      (_a = adapter.refresh) == null ? void 0 : _a.call(adapter);
+    } catch (error) {
+      new import_obsidian.Notice(error instanceof Error ? error.message : "Billing sign-in failed.");
+    } finally {
+      button.setDisabled(false);
+    }
+  })).addButton((button) => button.setButtonText("Create account").onClick(async () => {
+    var _a;
+    button.setDisabled(true);
+    try {
+      await signInBillingAccount(adapter, password, "register");
+      new import_obsidian.Notice("Billing account created and this installation was linked.");
+      (_a = adapter.refresh) == null ? void 0 : _a.call(adapter);
+    } catch (error) {
+      new import_obsidian.Notice(error instanceof Error ? error.message : "Billing account creation failed.");
+    } finally {
+      button.setDisabled(false);
+    }
+  })).addButton((button) => button.setButtonText("Sign out").setDisabled(!adapter.state.billingAccessToken).onClick(async () => {
+    var _a;
+    adapter.state.billingAccessToken = "";
+    adapter.state.billingAccountLinked = false;
+    await adapter.persist();
+    new import_obsidian.Notice("Billing account signed out on this installation.");
+    (_a = adapter.refresh) == null ? void 0 : _a.call(adapter);
+  }));
+}
+
+// publish/src/billing.ts
 var CONSTANCE_BASE_URL = "https://app.tutivsoft.com";
 var CONSTANCE_APP_ID = "kairo-quick-capture";
 var FREE_USES_PER_DAY = 3;
@@ -103,18 +246,11 @@ function generateEventId() {
   window.crypto.getRandomValues(bytes);
   return `evt_${Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
 }
-function buildSpendPayload(deviceId, eventId) {
-  return {
-    app_id: CONSTANCE_APP_ID,
-    external_customer_id: deviceId,
-    machine_id: deviceId,
-    amount: 1,
-    event_id: eventId
-  };
-}
 function normalizeBillingSettings(settings, date = /* @__PURE__ */ new Date()) {
   settings.constanceDeviceId = typeof settings.constanceDeviceId === "string" ? settings.constanceDeviceId : "";
   settings.billingEmail = typeof settings.billingEmail === "string" ? settings.billingEmail : "";
+  settings.billingAccessToken = typeof settings.billingAccessToken === "string" ? settings.billingAccessToken : "";
+  settings.billingAccountLinked = settings.billingAccountLinked === true && Boolean(settings.billingAccessToken);
   settings.freeUsesRemaining = Number.isFinite(settings.freeUsesRemaining) ? Math.max(0, Math.min(FREE_USES_PER_DAY, Math.trunc(settings.freeUsesRemaining))) : FREE_USES_PER_DAY;
   settings.purchasedUses = Number.isFinite(settings.purchasedUses) ? Math.max(0, Math.trunc(settings.purchasedUses)) : 0;
   settings.pendingSpendEvents = Array.isArray(settings.pendingSpendEvents) ? settings.pendingSpendEvents.filter((item) => item && typeof item.eventId === "string" && Number.isInteger(item.amount) && item.amount > 0) : [];
@@ -131,21 +267,12 @@ function resetFreeUsesIfNeeded(settings, date = /* @__PURE__ */ new Date()) {
     settings.freeUsesRemaining = FREE_USES_PER_DAY;
   }
 }
-function consumeLocalUse(settings, date = /* @__PURE__ */ new Date()) {
-  resetFreeUsesIfNeeded(settings, date);
-  if (settings.freeUsesRemaining > 0) {
-    settings.freeUsesRemaining -= 1;
-    return "free";
-  }
-  return "none";
-}
-async function fetchEntitlements(deviceId) {
+async function fetchEntitlements(plugin) {
   var _a, _b, _c;
-  const response = await (0, import_obsidian.requestUrl)({
-    url: `${CONSTANCE_BASE_URL}/api/v1/public/browser/entitlements`,
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ app_id: CONSTANCE_APP_ID, external_customer_id: deviceId, machine_id: deviceId }),
+  const response = await (0, import_obsidian2.requestUrl)({
+    url: `${CONSTANCE_BASE_URL}/api/v1/billing/entitlements/me?${new URLSearchParams({ app_id: CONSTANCE_APP_ID, installation_id: plugin.settings.constanceDeviceId }).toString()}`,
+    method: "GET",
+    headers: { Authorization: `Bearer ${plugin.settings.billingAccessToken}` },
     throw: false
   });
   if (response.status < 200 || response.status >= 300) throw new Error(`Entitlement sync failed: HTTP ${response.status}`);
@@ -155,7 +282,8 @@ async function syncPurchasedUses(plugin) {
   return withBillingLock(plugin, async () => {
     if (!plugin.settings.constanceDeviceId) return;
     try {
-      plugin.settings.purchasedUses = await fetchEntitlements(plugin.settings.constanceDeviceId);
+      if (!plugin.settings.billingAccessToken || !plugin.settings.billingAccountLinked) return;
+      plugin.settings.purchasedUses = await fetchEntitlements(plugin);
       await plugin.persist();
     } catch (error) {
       console.error("Kairo: Constance entitlement sync failed", error);
@@ -165,56 +293,57 @@ async function syncPurchasedUses(plugin) {
 async function retryPendingSpendEvents(plugin) {
   var _a;
   for (const pending of [...(_a = plugin.settings.pendingSpendEvents) != null ? _a : []]) {
-    const result = await spendConstanceUse(plugin.settings.constanceDeviceId, pending.eventId);
+    const result = await spendConstanceUse(plugin, pending.eventId);
     if (result.kind === "error") break;
     plugin.settings.pendingSpendEvents = plugin.settings.pendingSpendEvents.filter((item) => item.eventId !== pending.eventId);
     plugin.settings.purchasedUses = result.kind === "ok" ? result.balance : 0;
     await plugin.persist();
   }
 }
-async function spendConstanceUse(deviceId, eventId = generateEventId()) {
-  var _a, _b, _c;
-  if (!deviceId) return { kind: "error" };
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    try {
-      const response = await (0, import_obsidian.requestUrl)({
-        url: `${CONSTANCE_BASE_URL}/api/v1/public/browser/credits/spend`,
-        method: "POST",
-        headers: { "Content-Type": "application/json", "Idempotency-Key": eventId },
-        body: JSON.stringify(buildSpendPayload(deviceId, eventId)),
-        throw: false
-      });
-      if (response.status === 402 || response.status === 404) return { kind: "insufficient" };
-      if (response.status >= 200 && response.status < 300) {
-        return { kind: "ok", balance: Math.max(0, Number((_c = (_b = (_a = response.json) == null ? void 0 : _a.data) == null ? void 0 : _b.credits) == null ? void 0 : _c.balance) || 0) };
-      }
-      if (response.status < 500 || attempt === 1) return { kind: "error" };
-    } catch (error) {
-      if (attempt === 1) {
-        console.error("Kairo: Constance credit spend failed", error);
-        return { kind: "error" };
-      }
-    }
+async function spendConstanceUse(plugin, eventId = generateEventId()) {
+  const result = await spendAccountCredits(plugin.settings, CONSTANCE_APP_ID, plugin.settings.constanceDeviceId, eventId, 1);
+  if (result.kind === "auth-required") {
+    plugin.settings.billingAccessToken = "";
+    plugin.settings.billingAccountLinked = false;
+    await plugin.persist();
+    return { kind: "error" };
   }
-  return { kind: "error" };
+  return result.kind === "ok" || result.kind === "insufficient" || result.kind === "error" ? result : { kind: "error" };
 }
 async function consumeCaptureUse(plugin, eventId = generateEventId()) {
   return withBillingLock(plugin, async () => {
     var _a;
-    const localUse = consumeLocalUse(plugin.settings);
-    if (localUse !== "none") {
+    if (!plugin.settings.billingAccessToken || !plugin.settings.billingAccountLinked) {
+      new import_obsidian2.Notice("Kairo: sign in or create a billing account in plugin settings before capturing.");
+      return false;
+    }
+    const free = await claimAccountFreeUsage(plugin.settings, CONSTANCE_APP_ID, plugin.settings.constanceDeviceId, eventId, 1);
+    if (free.kind === "ok") {
+      plugin.settings.freeUsesDay = currentDayKey();
+      plugin.settings.freeUsesRemaining = free.remaining;
       await plugin.persist();
       return true;
+    }
+    if (free.kind === "auth-required") {
+      plugin.settings.billingAccessToken = "";
+      plugin.settings.billingAccountLinked = false;
+      await plugin.persist();
+      new import_obsidian2.Notice("Kairo: your billing session expired. Sign in again in plugin settings.");
+      return false;
+    }
+    if (free.kind === "error") {
+      new import_obsidian2.Notice("Kairo: the account allowance could not be verified. Nothing was captured.");
+      return false;
     }
     plugin.settings.pendingSpendEvents = (_a = plugin.settings.pendingSpendEvents) != null ? _a : [];
     await retryPendingSpendEvents(plugin);
     if (plugin.settings.pendingSpendEvents.length > 0) {
-      new import_obsidian.Notice("Kairo: a previous capture spend is still being reconciled. Try again when the connection is restored.");
+      new import_obsidian2.Notice("Kairo: a previous capture spend is still being reconciled. Try again when the connection is restored.");
       return false;
     }
     plugin.settings.pendingSpendEvents.push({ eventId, amount: 1 });
     await plugin.persist();
-    const result = await spendConstanceUse(plugin.settings.constanceDeviceId, eventId);
+    const result = await spendConstanceUse(plugin, eventId);
     if (result.kind === "ok") {
       plugin.settings.purchasedUses = result.balance;
       plugin.settings.pendingSpendEvents = plugin.settings.pendingSpendEvents.filter((item) => item.eventId !== eventId);
@@ -225,23 +354,27 @@ async function consumeCaptureUse(plugin, eventId = generateEventId()) {
       plugin.settings.purchasedUses = 0;
       plugin.settings.pendingSpendEvents = plugin.settings.pendingSpendEvents.filter((item) => item.eventId !== eventId);
       await plugin.persist();
-      new import_obsidian.Notice("Kairo: no uses remain. Buy a use pack in plugin settings.");
+      new import_obsidian2.Notice("Kairo: no uses remain. Buy a use pack in plugin settings.");
       return false;
     }
-    console.warn("Kairo: billing status is unknown; capture is allowed once and the persisted event will be reconciled before another paid capture.");
-    return true;
+    new import_obsidian2.Notice("Kairo: billing could not be verified. Nothing was captured.");
+    return false;
   });
 }
 function openBuyCheckout(plugin, tier) {
   var _a;
+  if (!plugin.settings.billingAccessToken || !plugin.settings.billingAccountLinked) {
+    new import_obsidian2.Notice("Sign in or create a billing account in Kairo settings before buying uses.");
+    return;
+  }
   const email = plugin.settings.billingEmail.trim();
   if (!email || !email.includes("@")) {
-    new import_obsidian.Notice("Enter a valid billing email in Kairo settings first.");
+    new import_obsidian2.Notice("Enter a valid billing email in Kairo settings first.");
     return;
   }
   const priceId = CONSTANCE_PRICE_IDS[tier];
   if (!priceId.startsWith("pri_")) {
-    new import_obsidian.Notice("Kairo billing is not available for this pack yet.");
+    new import_obsidian2.Notice("Kairo billing is not available for this pack yet.");
     return;
   }
   const params = new URLSearchParams({ app_id: CONSTANCE_APP_ID, price_id: priceId, email, external_customer_id: plugin.settings.constanceDeviceId });
@@ -249,7 +382,114 @@ function openBuyCheckout(plugin, tier) {
   (_a = plugin.pollAfterCheckout) == null ? void 0 : _a.call(plugin);
 }
 
-// main.ts
+// publish/src/plugin-support.ts
+var import_obsidian3 = require("obsidian");
+function safeDetail(value) {
+  if (value instanceof Error) return value.stack || value.message;
+  if (typeof value === "string") return value;
+  try {
+    return JSON.stringify(value);
+  } catch (e) {
+    return String(value);
+  }
+}
+var DocumentationModal = class extends import_obsidian3.Modal {
+  constructor(app, docs) {
+    super(app);
+    this.docs = docs;
+  }
+  onOpen() {
+    this.titleEl.setText(`${this.docs.name} documentation`);
+    this.contentEl.createEl("p", { text: this.docs.summary });
+    const addSection = (title, items) => {
+      this.contentEl.createEl("h3", { text: title });
+      const list = this.contentEl.createEl("ol");
+      for (const item of items) list.createEl("li", { text: item });
+    };
+    addSection("Quick start", this.docs.quickStart);
+    addSection("Useful commands", this.docs.commands);
+    addSection("Troubleshooting", this.docs.troubleshooting);
+  }
+  onClose() {
+    this.contentEl.empty();
+  }
+};
+var PluginSupport = class {
+  constructor(plugin, docs) {
+    this.plugin = plugin;
+    this.docs = docs;
+    this.entries = [];
+    this.maxEntries = 250;
+  }
+  start() {
+    this.info("plugin.loaded", `version=${this.plugin.manifest.version}`);
+    this.plugin.registerDomEvent(window, "error", (event) => {
+      this.error("runtime.error", event.error || event.message);
+    });
+    this.plugin.registerDomEvent(window, "unhandledrejection", (event) => {
+      this.error("runtime.unhandled_rejection", event.reason);
+    });
+    this.plugin.addCommand({
+      id: "open-documentation",
+      name: "Open documentation",
+      callback: () => new DocumentationModal(this.plugin.app, this.docs).open()
+    });
+    this.plugin.addCommand({
+      id: "copy-debug-log",
+      name: "Copy debug log",
+      callback: () => {
+        void this.copyDiagnostics();
+      }
+    });
+    this.plugin.addCommand({
+      id: "open-plugin-settings",
+      name: "Open plugin settings",
+      callback: () => {
+        const setting = this.plugin.app.setting;
+        setting == null ? void 0 : setting.open();
+        setting == null ? void 0 : setting.openTabById(this.plugin.manifest.id);
+      }
+    });
+  }
+  info(event, detail) {
+    this.record("info", event, detail);
+  }
+  warn(event, detail) {
+    this.record("warn", event, detail);
+  }
+  error(event, detail) {
+    this.record("error", event, detail);
+  }
+  record(level, event, detail) {
+    const entry = { at: (/* @__PURE__ */ new Date()).toISOString(), level, event };
+    if (detail !== void 0) entry.detail = safeDetail(detail).slice(0, 4e3);
+    this.entries.push(entry);
+    if (this.entries.length > this.maxEntries) this.entries.splice(0, this.entries.length - this.maxEntries);
+    const method = level === "error" ? console.error : level === "warn" ? console.warn : console.info;
+    method.call(console, `[${this.docs.name}] ${event}`, detail != null ? detail : "");
+  }
+  async copyDiagnostics() {
+    const header = [
+      `Plugin: ${this.docs.name}`,
+      `Plugin ID: ${this.plugin.manifest.id}`,
+      `Version: ${this.plugin.manifest.version}`,
+      `Captured: ${(/* @__PURE__ */ new Date()).toISOString()}`,
+      `User agent: ${navigator.userAgent}`,
+      ""
+    ];
+    try {
+      await navigator.clipboard.writeText(header.concat(this.entries.map(
+        (entry) => `${entry.at} [${entry.level.toUpperCase()}] ${entry.event}${entry.detail ? ` \u2014 ${entry.detail}` : ""}`
+      )).join("\n"));
+      new import_obsidian3.Notice(`${this.docs.name}: debug log copied. Secrets and note contents are not included.`);
+    } catch (error) {
+      this.error("diagnostics.copy_failed", error);
+      new import_obsidian3.Notice(`${this.docs.name}: could not copy the debug log.`);
+    }
+  }
+};
+
+// publish/main.ts
 var DEFAULT_TEMPLATE = "- {{time}} \u2014 {{text}}\n";
 var DEFAULT_SETTINGS = {
   shortcut: "Ctrl+Shift+Space",
@@ -266,6 +506,8 @@ var DEFAULT_SETTINGS = {
   setupCompleted: false,
   constanceDeviceId: "",
   billingEmail: "",
+  billingAccessToken: "",
+  billingAccountLinked: false,
   freeUsesRemaining: 3,
   freeUsesDay: currentDayKey(),
   purchasedUses: 0,
@@ -277,7 +519,7 @@ var DestinationChangedError = class extends Error {
     this.name = "DestinationChangedError";
   }
 };
-var KairoQuickCapturePlugin = class extends import_obsidian2.Plugin {
+var KairoQuickCapturePlugin = class extends import_obsidian4.Plugin {
   constructor() {
     super(...arguments);
     this.settings = { ...DEFAULT_SETTINGS };
@@ -287,6 +529,8 @@ var KairoQuickCapturePlugin = class extends import_obsidian2.Plugin {
   }
   async onload() {
     var _a;
+    this.support = new PluginSupport(this, { name: "Kairo Quick Capture", summary: "Capture ideas quickly to an inbox or daily note, including while the target is unavailable.", quickStart: ["Sign in to billing in Settings.", "Run Quick capture.", "Type the capture and submit; Kairo chooses the configured default destination."], commands: ["Quick capture", "Show capture queue", "Flush queue"], troubleshooting: ["Use Copy debug log before reporting a problem.", "Check the configured destination when queued captures do not flush."] });
+    this.support.start();
     const data = await this.loadData();
     this.settings = { ...DEFAULT_SETTINGS, ...(_a = data == null ? void 0 : data.settings) != null ? _a : {} };
     this.queue = Array.isArray(data == null ? void 0 : data.queue) ? data.queue : [];
@@ -382,7 +626,7 @@ var KairoQuickCapturePlugin = class extends import_obsidian2.Plugin {
   }
   async flushQueueInternal(showNotice) {
     if (!this.queue.length) {
-      if (showNotice) new import_obsidian2.Notice("Kairo queue is empty.");
+      if (showNotice) new import_obsidian4.Notice("Kairo queue is empty.");
       return;
     }
     const pending = [...this.queue].sort((a, b) => a.createdAt - b.createdAt);
@@ -400,15 +644,15 @@ var KairoQuickCapturePlugin = class extends import_obsidian2.Plugin {
     const addedDuringFlush = this.queue.filter((item) => !pendingIds.has(item.id));
     this.queue = [...remaining, ...addedDuringFlush].sort((a, b) => a.createdAt - b.createdAt);
     await this.persist();
-    if (showNotice) new import_obsidian2.Notice(remaining.length ? `Delivered ${delivered}; ${remaining.length} still queued.` : `Delivered ${delivered} queued capture${delivered === 1 ? "" : "s"}.`);
+    if (showNotice) new import_obsidian4.Notice(remaining.length ? `Delivered ${delivered}; ${remaining.length} still queued.` : `Delivered ${delivered} queued capture${delivered === 1 ? "" : "s"}.`);
   }
   async validateDestination() {
     const path = this.destinationFor();
     if (!path) return { ok: false, path, reason: "Choose an inbox file or daily-note folder first." };
     const folder = this.settings.vaultFolder ? this.app.vault.getAbstractFileByPath(normalizeVaultPath(this.settings.vaultFolder)) : null;
-    if (this.settings.vaultFolder && !(folder instanceof import_obsidian2.TFolder)) return { ok: false, path, reason: "Vault folder does not exist in the current vault." };
+    if (this.settings.vaultFolder && !(folder instanceof import_obsidian4.TFolder)) return { ok: false, path, reason: "Vault folder does not exist in the current vault." };
     const file = this.app.vault.getAbstractFileByPath(path);
-    if (file && !(file instanceof import_obsidian2.TFile)) return { ok: false, path, reason: "The destination path is a folder, not a Markdown file." };
+    if (file && !(file instanceof import_obsidian4.TFile)) return { ok: false, path, reason: "The destination path is a folder, not a Markdown file." };
     if (!file && !this.settings.createMissing) return { ok: false, path, reason: "Destination is missing. Enable 'Create missing destinations' to allow creation." };
     return { ok: true, path };
   }
@@ -418,10 +662,10 @@ var KairoQuickCapturePlugin = class extends import_obsidian2.Plugin {
     await write;
   }
   async appendSafelyUnlocked(path, entry, marker) {
-    const normalized = (0, import_obsidian2.normalizePath)(path);
+    const normalized = (0, import_obsidian4.normalizePath)(path);
     if (!normalized || normalized.includes("../") || normalized === "..") throw new Error("Destination must stay inside the current vault.");
     const existing = this.app.vault.getAbstractFileByPath(normalized);
-    if (existing && !(existing instanceof import_obsidian2.TFile)) throw new Error("Destination path is a folder.");
+    if (existing && !(existing instanceof import_obsidian4.TFile)) throw new Error("Destination path is a folder.");
     if (!existing) {
       if (!this.settings.createMissing) throw new Error("Destination file does not exist and creation is disabled.");
       await this.ensureParentFolders(normalized);
@@ -447,15 +691,15 @@ var KairoQuickCapturePlugin = class extends import_obsidian2.Plugin {
     for (const part of parts) {
       current = current ? `${current}/${part}` : part;
       const existing = this.app.vault.getAbstractFileByPath(current);
-      if (existing && !(existing instanceof import_obsidian2.TFolder)) throw new Error(`Cannot create destination folder: ${current} is a file.`);
+      if (existing && !(existing instanceof import_obsidian4.TFolder)) throw new Error(`Cannot create destination folder: ${current} is a file.`);
       if (!existing) await this.app.vault.createFolder(current);
     }
   }
   copyDiagnostic(summary) {
     var _a;
     const write = (_a = navigator.clipboard) == null ? void 0 : _a.writeText(summary);
-    if (write) void write.then(() => new import_obsidian2.Notice("Diagnostic copied. Captured text was not included."));
-    else new import_obsidian2.Notice("Clipboard access is unavailable. The diagnostic is visible in the queue.");
+    if (write) void write.then(() => new import_obsidian4.Notice("Diagnostic copied. Captured text was not included."));
+    else new import_obsidian4.Notice("Clipboard access is unavailable. The diagnostic is visible in the queue.");
   }
   makeId() {
     const bytes = new Uint8Array(8);
@@ -512,7 +756,7 @@ var KairoQuickCapturePlugin = class extends import_obsidian2.Plugin {
     }
   }
 };
-var CaptureModal = class extends import_obsidian2.Modal {
+var CaptureModal = class extends import_obsidian4.Modal {
   constructor(app, plugin) {
     super(app);
     this.plugin = plugin;
@@ -554,7 +798,7 @@ var CaptureModal = class extends import_obsidian2.Modal {
       const result = await this.plugin.capture(this.textarea.value);
       if (result.state === "saved") {
         this.status.setText("Saved");
-        new import_obsidian2.Notice("Capture saved.");
+        new import_obsidian4.Notice("Capture saved.");
         if (closeAfter || this.plugin.settings.closeAfterSaving) this.close();
       } else if (result.state === "queued") {
         this.diagnostic = result.diagnostic;
@@ -582,7 +826,7 @@ var CaptureModal = class extends import_obsidian2.Modal {
     this.contentEl.empty();
   }
 };
-var QueueModal = class extends import_obsidian2.Modal {
+var QueueModal = class extends import_obsidian4.Modal {
   constructor(app, plugin) {
     super(app);
     this.plugin = plugin;
@@ -618,7 +862,7 @@ var QueueModal = class extends import_obsidian2.Modal {
     this.contentEl.empty();
   }
 };
-var SetupModal = class extends import_obsidian2.Modal {
+var SetupModal = class extends import_obsidian4.Modal {
   constructor(app, plugin) {
     super(app);
     this.plugin = plugin;
@@ -656,7 +900,7 @@ var SetupModal = class extends import_obsidian2.Modal {
       this.plugin.settings.setupCompleted = true;
       await this.plugin.persist();
       result.setText("Setup complete. You can delete the test capture if you like.");
-      new import_obsidian2.Notice("Kairo setup complete.");
+      new import_obsidian4.Notice("Kairo setup complete.");
     } catch (error) {
       result.setText(error instanceof Error ? error.message : "Setup test failed.");
     }
@@ -665,7 +909,7 @@ var SetupModal = class extends import_obsidian2.Modal {
     this.contentEl.empty();
   }
 };
-var KairoSettingTab = class extends import_obsidian2.PluginSettingTab {
+var KairoSettingTab = class extends import_obsidian4.PluginSettingTab {
   constructor(app, plugin) {
     super(app, plugin);
     this.plugin = plugin;
@@ -674,76 +918,82 @@ var KairoSettingTab = class extends import_obsidian2.PluginSettingTab {
     const { containerEl } = this;
     containerEl.empty();
     containerEl.createEl("p", { text: "Local-first capture. The optional Electron shortcut is active while Obsidian is running; the Obsidian command hotkey is always available as a fallback." });
-    new import_obsidian2.Setting(containerEl).setName("Billing & usage").setHeading();
-    containerEl.createEl("p", { text: "Each capture uses 1 credit. New installs get 3 free captures per local calendar day. Paid packs are one-time purchases: $1 for 100 uses or $10 for 1,000 uses." });
+    new import_obsidian4.Setting(containerEl).setName("Billing & usage").setHeading();
+    containerEl.createEl("p", { text: "Each capture uses 1 credit. Billing accounts get 3 free captures per UTC day across all linked installations. Paid packs are one-time purchases: $1 for 100 uses or $10 for 1,000 uses." });
     this.usageSummaryEl = containerEl.createEl("p", { cls: "kairo-usage-summary", attr: { role: "status", "aria-live": "polite" } });
     this.renderUsageSummary();
-    new import_obsidian2.Setting(containerEl).setName("Billing email").setDesc("Used only for the Paddle receipt. It is not used to identify local captures.").addText((text) => text.setPlaceholder("you@example.com").setValue(this.plugin.settings.billingEmail).onChange(async (value) => {
-      this.plugin.settings.billingEmail = value.trim();
-      await this.plugin.persist();
-    }));
-    new import_obsidian2.Setting(containerEl).setName("Buy capture uses").setDesc("Opens TutivSoft Constance checkout in your browser. Purchases are one-time and linked to this installation.").addButton((button) => button.setButtonText("Buy $1 \xB7 100 uses").onClick(() => openBuyCheckout(this.plugin, "usd_001"))).addButton((button) => button.setButtonText("Buy $10 \xB7 1,000 uses").setCta().onClick(() => openBuyCheckout(this.plugin, "usd_010")));
-    new import_obsidian2.Setting(containerEl).setName("Refresh purchased balance").setDesc("Pull the latest purchased-use balance from Constance.").addButton((button) => button.setButtonText("Refresh").onClick(async () => {
+    addBillingAccountSettings(containerEl, {
+      state: this.plugin.settings,
+      appId: "kairo-quick-capture",
+      installationId: this.plugin.settings.constanceDeviceId,
+      appVersion: this.plugin.manifest.version,
+      persist: () => this.plugin.persist(),
+      syncBalance: () => syncPurchasedUses(this.plugin),
+      refresh: () => this.display()
+    });
+    new import_obsidian4.Setting(containerEl).setName("Buy capture uses").setDesc("Opens TutivSoft Constance checkout in your browser. Purchases are one-time and linked to this installation.").addButton((button) => button.setButtonText("Buy $1 \xB7 100 uses").onClick(() => openBuyCheckout(this.plugin, "usd_001"))).addButton((button) => button.setButtonText("Buy $10 \xB7 1,000 uses").setCta().onClick(() => openBuyCheckout(this.plugin, "usd_010")));
+    new import_obsidian4.Setting(containerEl).setName("Refresh purchased balance").setDesc("Pull the latest purchased-use balance from Constance.").addButton((button) => button.setButtonText("Refresh").onClick(async () => {
       button.setDisabled(true);
       await syncPurchasedUses(this.plugin);
       this.renderUsageSummary();
       button.setDisabled(false);
     }));
-    new import_obsidian2.Setting(containerEl).setName("Global shortcut").setDesc("Desktop accelerator, for example Ctrl+Shift+Space. Restart the shortcut after editing.").addText((text) => text.setValue(this.plugin.settings.shortcut).onChange(async (value) => {
+    new import_obsidian4.Setting(containerEl).setName("Global shortcut").setDesc("Desktop accelerator, for example Ctrl+Shift+Space. Restart the shortcut after editing.").addText((text) => text.setValue(this.plugin.settings.shortcut).onChange(async (value) => {
       this.plugin.settings.shortcut = value.trim() || DEFAULT_SETTINGS.shortcut;
       this.plugin.refreshShortcut();
       await this.plugin.persist();
     }));
-    new import_obsidian2.Setting(containerEl).setName("Vault folder").setDesc("Optional folder inside the current vault. Kairo never writes outside the current vault.").addText((text) => text.setPlaceholder("Leave blank for vault root").setValue(this.plugin.settings.vaultFolder).onChange(async (value) => {
+    new import_obsidian4.Setting(containerEl).setName("Vault folder").setDesc("Optional folder inside the current vault. Kairo never writes outside the current vault.").addText((text) => text.setPlaceholder("Leave blank for vault root").setValue(this.plugin.settings.vaultFolder).onChange(async (value) => {
       this.plugin.settings.vaultFolder = normalizeVaultPath(value);
       await this.plugin.persist();
     }));
-    new import_obsidian2.Setting(containerEl).setName("Destination mode").setDesc("Choose one inbox file or a dated daily-note folder.").addDropdown((dropdown) => dropdown.addOptions({ inbox: "Inbox file", daily: "Daily note" }).setValue(this.plugin.settings.destinationMode).onChange(async (value) => {
+    new import_obsidian4.Setting(containerEl).setName("Destination mode").setDesc("Choose one inbox file or a dated daily-note folder.").addDropdown((dropdown) => dropdown.addOptions({ inbox: "Inbox file", daily: "Daily note" }).setValue(this.plugin.settings.destinationMode).onChange(async (value) => {
       this.plugin.settings.destinationMode = value;
       await this.plugin.persist();
       this.display();
     }));
-    new import_obsidian2.Setting(containerEl).setName("Inbox file").setDesc("Relative Markdown path used in inbox mode.").addText((text) => text.setValue(this.plugin.settings.inboxPath).onChange(async (value) => {
+    new import_obsidian4.Setting(containerEl).setName("Inbox file").setDesc("Relative Markdown path used in inbox mode.").addText((text) => text.setValue(this.plugin.settings.inboxPath).onChange(async (value) => {
       this.plugin.settings.inboxPath = normalizeVaultPath(value) || DEFAULT_SETTINGS.inboxPath;
       await this.plugin.persist();
     }));
-    new import_obsidian2.Setting(containerEl).setName("Daily-note folder").setDesc("Relative folder used in daily-note mode.").addText((text) => text.setValue(this.plugin.settings.dailyFolder).onChange(async (value) => {
+    new import_obsidian4.Setting(containerEl).setName("Daily-note folder").setDesc("Relative folder used in daily-note mode.").addText((text) => text.setValue(this.plugin.settings.dailyFolder).onChange(async (value) => {
       this.plugin.settings.dailyFolder = normalizeVaultPath(value);
       await this.plugin.persist();
     }));
-    new import_obsidian2.Setting(containerEl).setName("Daily-note format").setDesc("Filename format: YYYY, MM, DD, HH, mm, ss.").addText((text) => text.setValue(this.plugin.settings.dailyFormat).onChange(async (value) => {
+    new import_obsidian4.Setting(containerEl).setName("Daily-note format").setDesc("Filename format: YYYY, MM, DD, HH, mm, ss.").addText((text) => text.setValue(this.plugin.settings.dailyFormat).onChange(async (value) => {
       this.plugin.settings.dailyFormat = value || DEFAULT_SETTINGS.dailyFormat;
       await this.plugin.persist();
     }));
-    new import_obsidian2.Setting(containerEl).setName("Timestamp format").setDesc("Template time format: YYYY, MM, DD, HH, mm, ss.").addText((text) => text.setValue(this.plugin.settings.timestampFormat).onChange(async (value) => {
+    new import_obsidian4.Setting(containerEl).setName("Timestamp format").setDesc("Template time format: YYYY, MM, DD, HH, mm, ss.").addText((text) => text.setValue(this.plugin.settings.timestampFormat).onChange(async (value) => {
       this.plugin.settings.timestampFormat = value || DEFAULT_SETTINGS.timestampFormat;
       await this.plugin.persist();
     }));
-    new import_obsidian2.Setting(containerEl).setName("Capture template").setDesc("Use {{time}}, {{source}}, {{text}}, and {{id}}. The id marker prevents duplicate retries.").addTextArea((text) => text.setValue(this.plugin.settings.template).onChange(async (value) => {
+    new import_obsidian4.Setting(containerEl).setName("Capture template").setDesc("Use {{time}}, {{source}}, {{text}}, and {{id}}. The id marker prevents duplicate retries.").addTextArea((text) => text.setValue(this.plugin.settings.template).onChange(async (value) => {
       this.plugin.settings.template = value || DEFAULT_TEMPLATE;
       await this.plugin.persist();
     }));
-    new import_obsidian2.Setting(containerEl).setName("Create missing destinations").setDesc("Off by default. When enabled, Kairo may create the configured Markdown file after an explicit setup/test action or capture.").addToggle((toggle) => toggle.setValue(this.plugin.settings.createMissing).onChange(async (value) => {
+    new import_obsidian4.Setting(containerEl).setName("Create missing destinations").setDesc("Off by default. When enabled, Kairo may create the configured Markdown file after an explicit setup/test action or capture.").addToggle((toggle) => toggle.setValue(this.plugin.settings.createMissing).onChange(async (value) => {
       this.plugin.settings.createMissing = value;
       await this.plugin.persist();
     }));
-    new import_obsidian2.Setting(containerEl).setName("Close after saving").setDesc("Close the scratchpad after a successful save.").addToggle((toggle) => toggle.setValue(this.plugin.settings.closeAfterSaving).onChange(async (value) => {
+    new import_obsidian4.Setting(containerEl).setName("Close after saving").setDesc("Close the scratchpad after a successful save.").addToggle((toggle) => toggle.setValue(this.plugin.settings.closeAfterSaving).onChange(async (value) => {
       this.plugin.settings.closeAfterSaving = value;
       await this.plugin.persist();
     }));
-    new import_obsidian2.Setting(containerEl).setName("Launch at login").setDesc("Optional desktop convenience. Disabled by default and handled locally by Electron when supported.").addToggle((toggle) => toggle.setValue(this.plugin.settings.launchAtLogin).onChange(async (value) => {
+    new import_obsidian4.Setting(containerEl).setName("Launch at login").setDesc("Optional desktop convenience. Disabled by default and handled locally by Electron when supported.").addToggle((toggle) => toggle.setValue(this.plugin.settings.launchAtLogin).onChange(async (value) => {
       this.plugin.settings.launchAtLogin = value;
       this.plugin.applyLaunchAtLogin();
       await this.plugin.persist();
     }));
-    new import_obsidian2.Setting(containerEl).setName("Queue").setDesc(`${this.plugin.queue.length} capture${this.plugin.queue.length === 1 ? "" : "s"} waiting for delivery.`).addButton((button) => button.setButtonText("Show queue").onClick(() => new QueueModal(this.app, this.plugin).open())).addButton((button) => button.setButtonText("Flush now").onClick(() => void this.plugin.flushQueue(true)));
-    new import_obsidian2.Setting(containerEl).setName("First-run setup").setDesc(this.plugin.settings.setupCompleted ? "Setup has been completed." : "Validate the destination and write a confirmed test capture.").addButton((button) => button.setButtonText("Open setup").onClick(() => new SetupModal(this.app, this.plugin).open()));
+    new import_obsidian4.Setting(containerEl).setName("Queue").setDesc(`${this.plugin.queue.length} capture${this.plugin.queue.length === 1 ? "" : "s"} waiting for delivery.`).addButton((button) => button.setButtonText("Show queue").onClick(() => new QueueModal(this.app, this.plugin).open())).addButton((button) => button.setButtonText("Flush now").onClick(() => void this.plugin.flushQueue(true)));
+    new import_obsidian4.Setting(containerEl).setName("First-run setup").setDesc(this.plugin.settings.setupCompleted ? "Setup has been completed." : "Validate the destination and write a confirmed test capture.").addButton((button) => button.setButtonText("Open setup").onClick(() => new SetupModal(this.app, this.plugin).open()));
     void syncPurchasedUses(this.plugin).then(() => this.renderUsageSummary());
   }
   renderUsageSummary() {
     if (!this.usageSummaryEl) return;
     normalizeBillingSettings(this.plugin.settings);
     const total = this.plugin.settings.freeUsesRemaining + this.plugin.settings.purchasedUses;
-    this.usageSummaryEl.setText(`Uses remaining: ${total.toLocaleString()} (${this.plugin.settings.freeUsesRemaining} free today + ${this.plugin.settings.purchasedUses.toLocaleString()} purchased)`);
+    const account = this.plugin.settings.billingAccountLinked ? "account linked" : "sign in required";
+    this.usageSummaryEl.setText(`Uses remaining: ${total.toLocaleString()} (${this.plugin.settings.freeUsesRemaining} free today + ${this.plugin.settings.purchasedUses.toLocaleString()} purchased; ${account})`);
   }
 };

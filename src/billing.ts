@@ -1,4 +1,6 @@
 import { Notice, requestUrl } from "obsidian";
+import { spendAccountCredits } from "./constance-account";
+import { claimAccountFreeUsage } from "./constance-account";
 
 const CONSTANCE_BASE_URL = "https://app.tutivsoft.com";
 export const CONSTANCE_APP_ID = "kairo-quick-capture";
@@ -13,6 +15,8 @@ export const CONSTANCE_PRICE_IDS = {
 export interface BillingSettings {
   constanceDeviceId: string;
   billingEmail: string;
+  billingAccessToken: string;
+  billingAccountLinked: boolean;
   freeUsesRemaining: number;
   freeUsesDay: string;
   purchasedUses: number;
@@ -79,6 +83,8 @@ export function buildSpendPayload(deviceId: string, eventId: string): {
 export function normalizeBillingSettings(settings: BillingSettings, date = new Date()): void {
   settings.constanceDeviceId = typeof settings.constanceDeviceId === "string" ? settings.constanceDeviceId : "";
   settings.billingEmail = typeof settings.billingEmail === "string" ? settings.billingEmail : "";
+  settings.billingAccessToken = typeof settings.billingAccessToken === "string" ? settings.billingAccessToken : "";
+  settings.billingAccountLinked = settings.billingAccountLinked === true && Boolean(settings.billingAccessToken);
   settings.freeUsesRemaining = Number.isFinite(settings.freeUsesRemaining)
     ? Math.max(0, Math.min(FREE_USES_PER_DAY, Math.trunc(settings.freeUsesRemaining)))
     : FREE_USES_PER_DAY;
@@ -112,12 +118,11 @@ export function consumeLocalUse(settings: BillingSettings, date = new Date()): L
   return "none";
 }
 
-async function fetchEntitlements(deviceId: string): Promise<number> {
+async function fetchEntitlements(plugin: BillingPlugin): Promise<number> {
   const response = await requestUrl({
-    url: `${CONSTANCE_BASE_URL}/api/v1/public/browser/entitlements`,
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ app_id: CONSTANCE_APP_ID, external_customer_id: deviceId, machine_id: deviceId }),
+    url: `${CONSTANCE_BASE_URL}/api/v1/billing/entitlements/me?${new URLSearchParams({ app_id: CONSTANCE_APP_ID, installation_id: plugin.settings.constanceDeviceId }).toString()}`,
+    method: "GET",
+    headers: { Authorization: `Bearer ${plugin.settings.billingAccessToken}` },
     throw: false,
   });
   if (response.status < 200 || response.status >= 300) throw new Error(`Entitlement sync failed: HTTP ${response.status}`);
@@ -128,7 +133,8 @@ export async function syncPurchasedUses(plugin: BillingPlugin): Promise<void> {
   return withBillingLock(plugin, async () => {
     if (!plugin.settings.constanceDeviceId) return;
     try {
-      plugin.settings.purchasedUses = await fetchEntitlements(plugin.settings.constanceDeviceId);
+      if (!plugin.settings.billingAccessToken || !plugin.settings.billingAccountLinked) return;
+      plugin.settings.purchasedUses = await fetchEntitlements(plugin);
       await plugin.persist();
     } catch (error) {
       console.error("Kairo: Constance entitlement sync failed", error);
@@ -138,7 +144,7 @@ export async function syncPurchasedUses(plugin: BillingPlugin): Promise<void> {
 
 export async function retryPendingSpendEvents(plugin: BillingPlugin): Promise<void> {
   for (const pending of [...(plugin.settings.pendingSpendEvents ?? [])]) {
-    const result = await spendConstanceUse(plugin.settings.constanceDeviceId, pending.eventId);
+    const result = await spendConstanceUse(plugin, pending.eventId);
     if (result.kind === "error") break;
     plugin.settings.pendingSpendEvents = plugin.settings.pendingSpendEvents.filter((item) => item.eventId !== pending.eventId);
     plugin.settings.purchasedUses = result.kind === "ok" ? result.balance : 0;
@@ -146,38 +152,35 @@ export async function retryPendingSpendEvents(plugin: BillingPlugin): Promise<vo
   }
 }
 
-export async function spendConstanceUse(deviceId: string, eventId = generateEventId()): Promise<SpendResult> {
-  if (!deviceId) return { kind: "error" };
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    try {
-      const response = await requestUrl({
-        url: `${CONSTANCE_BASE_URL}/api/v1/public/browser/credits/spend`,
-        method: "POST",
-        headers: { "Content-Type": "application/json", "Idempotency-Key": eventId },
-        body: JSON.stringify(buildSpendPayload(deviceId, eventId)),
-        throw: false,
-      });
-      if (response.status === 402 || response.status === 404) return { kind: "insufficient" };
-      if (response.status >= 200 && response.status < 300) {
-        return { kind: "ok", balance: Math.max(0, Number(response.json?.data?.credits?.balance) || 0) };
-      }
-      if (response.status < 500 || attempt === 1) return { kind: "error" };
-    } catch (error) {
-      if (attempt === 1) {
-        console.error("Kairo: Constance credit spend failed", error);
-        return { kind: "error" };
-      }
-    }
-  }
-  return { kind: "error" };
+export async function spendConstanceUse(plugin: BillingPlugin, eventId = generateEventId()): Promise<SpendResult> {
+  const result = await spendAccountCredits(plugin.settings, CONSTANCE_APP_ID, plugin.settings.constanceDeviceId, eventId, 1);
+  if (result.kind === "auth-required") { plugin.settings.billingAccessToken = ""; plugin.settings.billingAccountLinked = false; await plugin.persist(); return { kind: "error" }; }
+  return result.kind === "ok" || result.kind === "insufficient" || result.kind === "error" ? result : { kind: "error" };
 }
 
 export async function consumeCaptureUse(plugin: BillingPlugin, eventId = generateEventId()): Promise<boolean> {
   return withBillingLock(plugin, async () => {
-    const localUse = consumeLocalUse(plugin.settings);
-    if (localUse !== "none") {
+    if (!plugin.settings.billingAccessToken || !plugin.settings.billingAccountLinked) {
+      new Notice("Kairo: sign in or create a billing account in plugin settings before capturing.");
+      return false;
+    }
+    const free = await claimAccountFreeUsage(plugin.settings, CONSTANCE_APP_ID, plugin.settings.constanceDeviceId, eventId, 1);
+    if (free.kind === "ok") {
+      plugin.settings.freeUsesDay = currentDayKey();
+      plugin.settings.freeUsesRemaining = free.remaining;
       await plugin.persist();
       return true;
+    }
+    if (free.kind === "auth-required") {
+      plugin.settings.billingAccessToken = "";
+      plugin.settings.billingAccountLinked = false;
+      await plugin.persist();
+      new Notice("Kairo: your billing session expired. Sign in again in plugin settings.");
+      return false;
+    }
+    if (free.kind === "error") {
+      new Notice("Kairo: the account allowance could not be verified. Nothing was captured.");
+      return false;
     }
 
     plugin.settings.pendingSpendEvents = plugin.settings.pendingSpendEvents ?? [];
@@ -188,7 +191,7 @@ export async function consumeCaptureUse(plugin: BillingPlugin, eventId = generat
     }
     plugin.settings.pendingSpendEvents.push({ eventId, amount: 1 });
     await plugin.persist();
-    const result = await spendConstanceUse(plugin.settings.constanceDeviceId, eventId);
+    const result = await spendConstanceUse(plugin, eventId);
     if (result.kind === "ok") {
       plugin.settings.purchasedUses = result.balance;
       plugin.settings.pendingSpendEvents = plugin.settings.pendingSpendEvents.filter((item) => item.eventId !== eventId);
@@ -203,17 +206,16 @@ export async function consumeCaptureUse(plugin: BillingPlugin, eventId = generat
       return false;
     }
 
-    // Capturing is local and should remain useful offline. A transient billing
-    // outage therefore fails open for this one accepted capture; the next
-    // online sync reconciles the purchased-use display mirror. The mirror is
-    // never spent locally: every post-free capture must reach Constance so a
-    // server credit cannot be reused after a balance refresh.
-    console.warn("Kairo: billing status is unknown; capture is allowed once and the persisted event will be reconciled before another paid capture.");
-    return true;
+    new Notice("Kairo: billing could not be verified. Nothing was captured.");
+    return false;
   });
 }
 
 export function openBuyCheckout(plugin: BillingPlugin, tier: keyof typeof CONSTANCE_PRICE_IDS): void {
+  if (!plugin.settings.billingAccessToken || !plugin.settings.billingAccountLinked) {
+    new Notice("Sign in or create a billing account in Kairo settings before buying uses.");
+    return;
+  }
   const email = plugin.settings.billingEmail.trim();
   if (!email || !email.includes("@")) {
     new Notice("Enter a valid billing email in Kairo settings first.");
