@@ -1,4 +1,4 @@
-import { App, Modal, Notice, Plugin } from "obsidian";
+import { App, Modal, Notice, Platform, Plugin } from "obsidian";
 
 export interface PluginDocumentation {
   name: string;
@@ -98,7 +98,7 @@ export class PluginSupport {
       `Plugin ID: ${this.plugin.manifest.id}`,
       `Version: ${this.plugin.manifest.version}`,
       `Captured: ${new Date().toISOString()}`,
-      `User agent: ${navigator.userAgent}`,
+      `Platform: ${Platform.isMobile ? "mobile" : "desktop"}`,
       "",
     ];
     try {

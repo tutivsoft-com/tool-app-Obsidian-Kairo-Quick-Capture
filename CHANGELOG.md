@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.4.13 - 2026-09-21
+
+- Replaced navigator-based diagnostics with Obsidian's Platform API.
+- Made the public release build reproducible so Obsidian's artifact check matches the tagged main.js.
+
 ## 3.4.9 - 2026-09-20
 
 - Prepared the next patch version across source, publish, and public metadata.
