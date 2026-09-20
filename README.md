@@ -1,5 +1,7 @@
 # Kairo Quick Capture
 
+Version: `3.4.12`
+
 Kairo is a local-first Obsidian scratchpad for capturing fleeting thoughts quickly and delivering them to an inbox file or dated daily note. It supports plain text, pasted text, URLs, and multiline notes without an internet connection or AI service.
 
 ## What it does
