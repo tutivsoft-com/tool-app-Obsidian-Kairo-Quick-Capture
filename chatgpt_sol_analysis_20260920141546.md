@@ -23,6 +23,12 @@ Help covers quick capture, queue behavior, defaults, billing/account, privacy, t
 
 Run `npm run typecheck`, `npm test`, `npm run build`, optional `npm run check:release`, and `git diff --check`. Public output must match private publish files.
 
+The 3.4.14 release passed the local build, all 9 tests, release metadata check,
+and byte-for-byte private/public `main.js` comparison. Obsidian's automated
+review marked 3.4.14 Completed after the navigator check was replaced with
+Obsidian's `Platform` API. Remaining source-code and clipboard findings are
+non-blocking recommendations.
+
 ## Remaining limitation
 
 External account and checkout flows need live service availability for end-to-end confirmation.
