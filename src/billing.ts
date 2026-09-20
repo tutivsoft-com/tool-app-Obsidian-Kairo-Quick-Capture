@@ -64,22 +64,6 @@ export function generateEventId(): string {
   return `evt_${Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
 }
 
-export function buildSpendPayload(deviceId: string, eventId: string): {
-  app_id: string;
-  external_customer_id: string;
-  machine_id: string;
-  amount: 1;
-  event_id: string;
-} {
-  return {
-    app_id: CONSTANCE_APP_ID,
-    external_customer_id: deviceId,
-    machine_id: deviceId,
-    amount: 1,
-    event_id: eventId,
-  };
-}
-
 export function normalizeBillingSettings(settings: BillingSettings, date = new Date()): void {
   settings.constanceDeviceId = typeof settings.constanceDeviceId === "string" ? settings.constanceDeviceId : "";
   settings.billingEmail = typeof settings.billingEmail === "string" ? settings.billingEmail : "";
