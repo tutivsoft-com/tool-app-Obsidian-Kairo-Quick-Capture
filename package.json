@@ -1,6 +1,6 @@
 {
   "name": "kairo-quick-capture",
-  "version": "3.4.8",
+  "version": "3.4.9",
   "description": "Fast, local-first scratchpad capture for Obsidian.",
   "main": "main.js",
   "scripts": {

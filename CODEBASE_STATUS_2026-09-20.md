@@ -5,9 +5,9 @@ This snapshot records the repository state reviewed on 2026-09-20.
 ## Repository state
 
 - Branch: `main`
-- Reviewed commit: `7ad995b`
-- Version: `3.4.8`, consistent across `manifest.json`, `package.json`, and `VERSION`.
-- The working tree was clean before this documentation update.
+- Documentation baseline commit: `7ad995b`
+- Version: `3.4.9`, consistent across `manifest.json`, `package.json`, and `VERSION`.
+- The working tree was clean before this version and documentation update.
 
 ## Current implementation
 
