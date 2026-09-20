@@ -1,5 +1,9 @@
 # Changelog
 
+## 3.4.14 - 2026-09-21
+
+- Corrected the public build entrypoint so Obsidian can reproduce the tagged bundle from the public source tree.
+
 ## 3.4.13 - 2026-09-21
 
 - Replaced navigator-based diagnostics with Obsidian's Platform API.

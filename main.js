@@ -18,7 +18,7 @@ var __copyProps = (to, from, except, desc) => {
 };
 var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
-// publish/main.ts
+// main.ts
 var main_exports = {};
 __export(main_exports, {
   default: () => KairoQuickCapturePlugin
@@ -26,7 +26,7 @@ __export(main_exports, {
 module.exports = __toCommonJS(main_exports);
 var import_obsidian4 = require("obsidian");
 
-// publish/src/core.ts
+// src/core.ts
 function formatTimestamp(date, format) {
   const pad = (value) => String(value).padStart(2, "0");
   const replacements = {
@@ -66,10 +66,10 @@ function diagnosticSummary(destination, error, queueId) {
   return `Kairo could not deliver capture ${queueId}. Destination: ${destination}. Reason: ${message}`;
 }
 
-// publish/src/billing.ts
+// src/billing.ts
 var import_obsidian2 = require("obsidian");
 
-// publish/src/constance-account.ts
+// src/constance-account.ts
 var import_obsidian = require("obsidian");
 var CONSTANCE_ACCOUNT_BASE_URL = "https://app.tutivsoft.com";
 function errorDetail(response, fallback) {
@@ -212,7 +212,7 @@ function addBillingAccountSettings(containerEl, adapter) {
   }));
 }
 
-// publish/src/billing.ts
+// src/billing.ts
 var CONSTANCE_BASE_URL = "https://app.tutivsoft.com";
 var CONSTANCE_APP_ID = "kairo-quick-capture";
 var FREE_USES_PER_DAY = 3;
@@ -382,7 +382,7 @@ function openBuyCheckout(plugin, tier) {
   (_a = plugin.pollAfterCheckout) == null ? void 0 : _a.call(plugin);
 }
 
-// publish/src/plugin-support.ts
+// src/plugin-support.ts
 var import_obsidian3 = require("obsidian");
 function safeDetail(value) {
   if (value instanceof Error) return value.stack || value.message;
@@ -489,7 +489,7 @@ var PluginSupport = class {
   }
 };
 
-// publish/main.ts
+// main.ts
 var DEFAULT_TEMPLATE = "- {{time}} \u2014 {{text}}\n";
 var DEFAULT_SETTINGS = {
   shortcut: "Ctrl+Shift+Space",
