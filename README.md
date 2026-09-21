@@ -1,6 +1,6 @@
 # Kairo Quick Capture
 
-Version: `3.4.15`
+Version: `3.4.16`
 
 Kairo is a local-first Obsidian scratchpad for capturing fleeting thoughts quickly and delivering them to an inbox file or dated daily note. It supports plain text, pasted text, URLs, and multiline notes without an internet connection or AI service.
 
@@ -30,16 +30,18 @@ Default destination is `Inbox.md` at the vault root. Daily notes default to `Dai
 
 ## Billing and usage
 
-Kairo uses TutivSoft Constance's unsigned browser-relay endpoints for one-time
-capture credits. The app id is `kairo-quick-capture`, and the client sends only
-the app id, a random installation id, the spend amount, and an idempotency event
-id when checking or spending purchased uses. It never sends captured text to
-Constance.
+Kairo uses TutivSoft Constance's authenticated account billing endpoints for
+one-time capture credits. The app id is `kairo-quick-capture`; a random
+installation id is linked to the signed-in account, and the client sends only
+the app id, installation id, spend amount, and stable idempotency event id for
+usage operations. It never sends captured text to Constance.
 
-Each local calendar day starts with 3 free captures. After those are used, each
-capture consumes 1 purchased credit. The available one-time packs are $1 for
-100 uses and $10 for 1,000 uses. Checkout is linked to Kairo's provisioned
-Constance catalog prices.
+Each local calendar day starts with 3 free captures from Constance's
+account-scoped allowance. After those are used, each capture consumes 1
+purchased credit. The available one-time packs are $1 for 100 uses and $10 for
+1,000 uses. Purchases prefer authenticated catalog-code checkout with an
+idempotency key and poll settlement; the legacy `/buy` URL is retained only as
+a fallback.
 
 A capture is charged once when it is accepted by Kairo—either delivered to its
 destination or durably placed in the local retry queue. Queue retries do not
@@ -50,7 +52,8 @@ fingerprint.
 
 ## Privacy and threat model
 
-Kairo has no AI path, telemetry, passwords, or cloud queue. Captured text is
+Kairo has no AI path, telemetry, or cloud queue. Billing account credentials
+are used only for Constance requests; passwords are never stored. Captured text is
 written only to the configured current-vault destination or Obsidian's plugin
 data while queued. Queue data is plain local application data and inherits the
 operating system and vault permissions. Anyone who can read the vault or

@@ -1,6 +1,11 @@
 # Privacy and threat model
 
-Kairo keeps capture content local. It has no AI, analytics, account, or credential features. Optional billing requests go only to TutivSoft Constance and contain the fixed app id `kairo-quick-capture`, a random installation id, a one-credit spend amount, and an idempotency event id. Captured text is never included in billing requests. Checkout may receive the billing email entered by the user for a receipt.
+Kairo keeps capture content local. It has no AI or analytics. Billing account
+credentials are used only for TutivSoft Constance requests; passwords are never
+stored. Billing requests contain the fixed app id `kairo-quick-capture`, a
+random installation id, a one-credit spend amount, and an idempotency event id.
+Captured text is never included in billing requests. The legacy checkout
+fallback may receive the billing email entered by the user for a receipt.
 
 The queue is intentionally recoverable after restart, but it is not encrypted. Protect the vault and Obsidian profile using the operating system's account and disk protections. Kairo never puts passwords, API keys, or diagnostics into capture files. Copyable diagnostics omit capture content.
 

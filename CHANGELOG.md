@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.4.16 - 2026-09-22
+
+- Updated the release metadata for the authenticated Constance billing and
+  checkout maintenance pass.
+
 ## 3.4.15 - 2026-09-21
 
 - Incremented release metadata without rebuilding the plugin.

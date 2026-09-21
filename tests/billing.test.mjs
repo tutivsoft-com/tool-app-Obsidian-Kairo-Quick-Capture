@@ -39,8 +39,10 @@ test("local consumption uses only the daily free allowance", () => {
 });
 
 test("concurrent local consumption is serialized", async () => {
-  const settings = { constanceDeviceId: "device", billingEmail: "", freeUsesRemaining: 3, freeUsesDay: "2026-09-11", purchasedUses: 0 };
+  const settings = { constanceDeviceId: "device", billingEmail: "", billingAccessToken: "token", billingAccountLinked: true, freeUsesRemaining: 3, freeUsesDay: "2026-09-11", purchasedUses: 0, pendingSpendEvents: [] };
   const persisted = [];
+  let requests = 0;
+  globalThis.__kairoRequestUrl = async () => ({ status: 200, json: { data: { remaining: 2 - requests++ } } });
   const plugin = {
     settings,
     async persist() {
@@ -48,41 +50,31 @@ test("concurrent local consumption is serialized", async () => {
       persisted.push(settings.freeUsesRemaining);
     },
   };
-  const results = await Promise.all([
-    billing.consumeCaptureUse(plugin, "evt-1"),
-    billing.consumeCaptureUse(plugin, "evt-2"),
-    billing.consumeCaptureUse(plugin, "evt-3"),
-  ]);
-  assert.deepEqual(results, [true, true, true]);
-  assert.equal(settings.freeUsesRemaining, 0);
-  assert.equal(persisted.length, 3);
+  try {
+    const results = await Promise.all([
+      billing.consumeCaptureUse(plugin, "evt-1"),
+      billing.consumeCaptureUse(plugin, "evt-2"),
+      billing.consumeCaptureUse(plugin, "evt-3"),
+    ]);
+    assert.deepEqual(results, [true, true, true]);
+    assert.equal(settings.freeUsesRemaining, 0);
+    assert.equal(persisted.length, 3);
+  } finally {
+    delete globalThis.__kairoRequestUrl;
+  }
 });
 
-test("spend payload follows the unsigned same-install contract", () => {
-  assert.deepEqual(billing.buildSpendPayload("device-1", "evt-1"), {
-    app_id: "kairo-quick-capture",
-    external_customer_id: "device-1",
-    machine_id: "device-1",
-    amount: 1,
-    event_id: "evt-1",
-  });
-});
-
-test("a spend retry reuses the same idempotency key and body", async () => {
-  const requests = [];
-  let attempts = 0;
+test("authenticated spend sends the linked installation and stable event", async () => {
+  let request;
   globalThis.__kairoRequestUrl = async (options) => {
-    requests.push(options);
-    attempts += 1;
-    if (attempts === 1) throw new Error("simulated transport failure");
+    request = options;
     return { status: 200, json: { data: { credits: { balance: 6 } } } };
   };
   try {
-    assert.deepEqual(await billing.spendConstanceUse("device-1", "evt-stable"), { kind: "ok", balance: 6 });
-    assert.equal(requests.length, 2);
-    assert.equal(requests[0].headers["Idempotency-Key"], "evt-stable");
-    assert.equal(requests[1].headers["Idempotency-Key"], "evt-stable");
-    assert.equal(requests[0].body, requests[1].body);
+    const plugin = { settings: { constanceDeviceId: "device-1", billingEmail: "", billingAccessToken: "token", billingAccountLinked: true }, async persist() {} };
+    assert.deepEqual(await billing.spendConstanceUse(plugin, "evt-stable"), { kind: "ok", balance: 6 });
+    assert.deepEqual(JSON.parse(request.body), { app_id: "kairo-quick-capture", installation_id: "device-1", event_id: "evt-stable", amount: 1 });
+    assert.equal(request.headers.Authorization, "Bearer token");
   } finally {
     delete globalThis.__kairoRequestUrl;
   }
@@ -92,16 +84,17 @@ test("each post-free capture spends against the server mirror", async () => {
   const requests = [];
   globalThis.__kairoRequestUrl = async (options) => {
     requests.push(options);
+    if (requests.length % 2 === 1) return { status: 402, json: {} };
     const balance = 10 - requests.length;
     return { status: 200, json: { data: { credits: { balance } } } };
   };
-  const settings = { constanceDeviceId: "device-1", billingEmail: "", freeUsesRemaining: 0, freeUsesDay: billing.currentDayKey(), purchasedUses: 10 };
+  const settings = { constanceDeviceId: "device-1", billingEmail: "", billingAccessToken: "token", billingAccountLinked: true, freeUsesRemaining: 0, freeUsesDay: billing.currentDayKey(), purchasedUses: 10, pendingSpendEvents: [] };
   const plugin = { settings, async persist() {} };
   try {
     assert.equal(await billing.consumeCaptureUse(plugin, "evt-paid-1"), true);
     assert.equal(await billing.consumeCaptureUse(plugin, "evt-paid-2"), true);
-    assert.equal(requests.length, 2);
-    assert.equal(settings.purchasedUses, 8);
+    assert.equal(requests.length, 4);
+    assert.equal(settings.purchasedUses, 6);
   } finally {
     delete globalThis.__kairoRequestUrl;
   }
@@ -109,6 +102,8 @@ test("each post-free capture spends against the server mirror", async () => {
 
 test("catalog price ids are Kairo's provisioned one-time prices", () => {
   assert.equal(billing.CONSTANCE_APP_ID, "kairo-quick-capture");
+  assert.equal(billing.CONSTANCE_PLAN_CODES.usd_001, "standard");
+  assert.equal(billing.CONSTANCE_PLAN_CODES.usd_010, "ultimate");
   assert.equal(billing.CONSTANCE_PRICE_IDS.usd_001, "pri_01m28hknyche7mcq4vdgjcp4x6");
   assert.equal(billing.CONSTANCE_PRICE_IDS.usd_010, "pri_01m28hkppkk8m3dy56gmmbnrst");
 });

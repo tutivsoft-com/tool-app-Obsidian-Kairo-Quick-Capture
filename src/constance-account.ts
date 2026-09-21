@@ -18,6 +18,11 @@ export interface ConstanceAccountAdapter {
   refresh?(): void;
 }
 
+interface AuthenticationResult {
+  accessToken?: string;
+  verificationRequired?: boolean;
+}
+
 export type FreeUsageResult =
   | { kind: "ok"; remaining: number }
   | { kind: "insufficient" }
@@ -39,7 +44,7 @@ async function authenticate(
   email: string,
   password: string,
   installationId: string,
-): Promise<string> {
+): Promise<AuthenticationResult> {
   const body = mode === "register"
     ? { email, password, external_customer_id: installationId }
     : { email, password };
@@ -54,8 +59,9 @@ async function authenticate(
     throw new Error(errorDetail(response, `Billing ${mode} failed (HTTP ${response.status})`));
   }
   const token = String(response.json?.access_token || "");
-  if (!token) throw new Error("Constance did not return an account token.");
-  return token;
+  if (token) return { accessToken: token };
+  if (response.json?.verification_required === true) return { verificationRequired: true };
+  throw new Error("Constance did not return an account token.");
 }
 
 async function linkInstallation(adapter: ConstanceAccountAdapter, token: string): Promise<void> {
@@ -86,13 +92,38 @@ export async function signInBillingAccount(
   if (!email || !email.includes("@")) throw new Error("Enter a valid billing email.");
   if (password.length < 8) throw new Error("Password must contain at least 8 characters.");
   if (!adapter.installationId) throw new Error("The plugin installation ID is not ready.");
-  const token = await authenticate(mode, email, password, adapter.installationId);
+  const result = await authenticate(mode, email, password, adapter.installationId);
+  if (!result.accessToken) {
+    throw new Error("Account created. Check your email for the verification token, then use Verify account.");
+  }
+  await completeBillingSignIn(adapter, email, result.accessToken);
+}
+
+async function completeBillingSignIn(adapter: ConstanceAccountAdapter, email: string, token: string): Promise<void> {
   await linkInstallation(adapter, token);
   adapter.state.billingEmail = email;
   adapter.state.billingAccessToken = token;
   adapter.state.billingAccountLinked = true;
   await adapter.persist();
   await adapter.syncBalance();
+}
+
+export async function verifyBillingAccount(adapter: ConstanceAccountAdapter, verificationToken: string): Promise<void> {
+  const token = verificationToken.trim();
+  if (!token) throw new Error("Enter the verification token from your billing email.");
+  const response = await requestUrl({
+    url: `${CONSTANCE_ACCOUNT_BASE_URL}/api/v1/auth/register/verify`,
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token }),
+    throw: false,
+  });
+  if (response.status < 200 || response.status >= 300) {
+    throw new Error(errorDetail(response, `Billing account verification failed (HTTP ${response.status})`));
+  }
+  const accessToken = String(response.json?.access_token || "");
+  if (!accessToken) throw new Error("Constance did not return an account token after verification.");
+  await completeBillingSignIn(adapter, adapter.state.billingEmail.trim().toLowerCase(), accessToken);
 }
 
 export async function validateBillingSession(adapter: ConstanceAccountAdapter): Promise<boolean> {
@@ -170,6 +201,7 @@ export async function spendAccountCredits(
 
 export function addBillingAccountSettings(containerEl: HTMLElement, adapter: ConstanceAccountAdapter): void {
   let password = "";
+  let verificationToken = "";
   new Setting(containerEl)
     .setName("Billing account email")
     .setDesc("Used for sign-in, purchase restore, and checkout. Reinstalling no longer creates a new free allowance.")
@@ -184,6 +216,10 @@ export function addBillingAccountSettings(containerEl: HTMLElement, adapter: Con
       text.inputEl.type = "password";
       text.setPlaceholder("At least 8 characters").onChange((value) => { password = value; });
     });
+  new Setting(containerEl)
+    .setName("Email verification token")
+    .setDesc("After creating an account, enter the one-time token sent by email, then verify it.")
+    .addText((text) => { text.inputEl.type = "password"; text.setPlaceholder("Paste token").onChange((value) => { verificationToken = value.trim(); }); });
   const status = adapter.state.billingAccountLinked ? "Signed in and linked" : "Not signed in";
   new Setting(containerEl)
     .setName("Billing account")
@@ -208,6 +244,18 @@ export function addBillingAccountSettings(containerEl: HTMLElement, adapter: Con
         adapter.refresh?.();
       } catch (error) {
         new Notice(error instanceof Error ? error.message : "Billing account creation failed.");
+      } finally {
+        button.setDisabled(false);
+      }
+    }))
+    .addButton((button) => button.setButtonText("Verify account").onClick(async () => {
+      button.setDisabled(true);
+      try {
+        await verifyBillingAccount(adapter, verificationToken);
+        new Notice("Billing account verified and this installation was linked.");
+        adapter.refresh?.();
+      } catch (error) {
+        new Notice(error instanceof Error ? error.message : "Billing account verification failed.");
       } finally {
         button.setDisabled(false);
       }

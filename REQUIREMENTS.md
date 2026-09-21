@@ -62,10 +62,10 @@ Kairo lets a user capture a thought in seconds from anywhere on the desktop, eve
 
 24. Allow 3 free captures per local calendar day, resetting from the local calendar date.
 25. After the free allowance, require 1 purchased credit for each accepted capture.
-26. Offer one-time packs of $1 for 100 uses and $10 for 1,000 uses through Constance's unsigned browser-relay checkout and credit endpoints.
-27. Keep the Constance app id exactly `kairo-quick-capture`; do not put shared signing secrets in the plugin.
-28. Use a stable idempotency event id for each spend attempt and never charge queued-capture retries again.
-29. Keep the real catalog price ids synchronized in source and publish, and fail closed for confirmed exhaustion while preserving local capture during transient billing outages.
+26. Offer one-time packs of $1 for 100 uses and $10 for 1,000 uses through Constance's authenticated account checkout and credit endpoints.
+27. Keep the Constance app id exactly `kairo-quick-capture`; do not put shared signing secrets in the plugin. This backend-less client does not use signed callbacks.
+28. Use a stable idempotency event id for each free-usage claim and paid spend attempt, and never charge queued-capture retries again.
+29. Prefer authenticated catalog plan codes (`standard` and `ultimate`) with an `Idempotency-Key`, poll checkout settlement, and retain the real catalog price ids only for the legacy `/buy` fallback.
 
 ## Optional AI features
 

@@ -77,7 +77,7 @@ function errorDetail(response, fallback) {
   return String(((_a = response.json) == null ? void 0 : _a.detail) || ((_b = response.json) == null ? void 0 : _b.message) || response.text || fallback);
 }
 async function authenticate(mode, email, password, installationId) {
-  var _a;
+  var _a, _b;
   const body = mode === "register" ? { email, password, external_customer_id: installationId } : { email, password };
   const response = await (0, import_obsidian.requestUrl)({
     url: `${CONSTANCE_ACCOUNT_BASE_URL}/api/v1/auth/${mode}`,
@@ -90,8 +90,9 @@ async function authenticate(mode, email, password, installationId) {
     throw new Error(errorDetail(response, `Billing ${mode} failed (HTTP ${response.status})`));
   }
   const token = String(((_a = response.json) == null ? void 0 : _a.access_token) || "");
-  if (!token) throw new Error("Constance did not return an account token.");
-  return token;
+  if (token) return { accessToken: token };
+  if (((_b = response.json) == null ? void 0 : _b.verification_required) === true) return { verificationRequired: true };
+  throw new Error("Constance did not return an account token.");
 }
 async function linkInstallation(adapter, token) {
   const response = await (0, import_obsidian.requestUrl)({
@@ -116,13 +117,37 @@ async function signInBillingAccount(adapter, password, mode) {
   if (!email || !email.includes("@")) throw new Error("Enter a valid billing email.");
   if (password.length < 8) throw new Error("Password must contain at least 8 characters.");
   if (!adapter.installationId) throw new Error("The plugin installation ID is not ready.");
-  const token = await authenticate(mode, email, password, adapter.installationId);
+  const result = await authenticate(mode, email, password, adapter.installationId);
+  if (!result.accessToken) {
+    throw new Error("Account created. Check your email for the verification token, then use Verify account.");
+  }
+  await completeBillingSignIn(adapter, email, result.accessToken);
+}
+async function completeBillingSignIn(adapter, email, token) {
   await linkInstallation(adapter, token);
   adapter.state.billingEmail = email;
   adapter.state.billingAccessToken = token;
   adapter.state.billingAccountLinked = true;
   await adapter.persist();
   await adapter.syncBalance();
+}
+async function verifyBillingAccount(adapter, verificationToken) {
+  var _a;
+  const token = verificationToken.trim();
+  if (!token) throw new Error("Enter the verification token from your billing email.");
+  const response = await (0, import_obsidian.requestUrl)({
+    url: `${CONSTANCE_ACCOUNT_BASE_URL}/api/v1/auth/register/verify`,
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token }),
+    throw: false
+  });
+  if (response.status < 200 || response.status >= 300) {
+    throw new Error(errorDetail(response, `Billing account verification failed (HTTP ${response.status})`));
+  }
+  const accessToken = String(((_a = response.json) == null ? void 0 : _a.access_token) || "");
+  if (!accessToken) throw new Error("Constance did not return an account token after verification.");
+  await completeBillingSignIn(adapter, adapter.state.billingEmail.trim().toLowerCase(), accessToken);
 }
 async function claimAccountFreeUsage(state, appId, installationId, eventId, amount) {
   var _a, _b;
@@ -167,6 +192,7 @@ async function spendAccountCredits(state, appId, installationId, eventId, amount
 }
 function addBillingAccountSettings(containerEl, adapter) {
   let password = "";
+  let verificationToken = "";
   new import_obsidian.Setting(containerEl).setName("Billing account email").setDesc("Used for sign-in, purchase restore, and checkout. Reinstalling no longer creates a new free allowance.").addText((text) => text.setPlaceholder("you@example.com").setValue(adapter.state.billingEmail).onChange(async (value) => {
     adapter.state.billingEmail = value.trim();
     await adapter.persist();
@@ -175,6 +201,12 @@ function addBillingAccountSettings(containerEl, adapter) {
     text.inputEl.type = "password";
     text.setPlaceholder("At least 8 characters").onChange((value) => {
       password = value;
+    });
+  });
+  new import_obsidian.Setting(containerEl).setName("Email verification token").setDesc("After creating an account, enter the one-time token sent by email, then verify it.").addText((text) => {
+    text.inputEl.type = "password";
+    text.setPlaceholder("Paste token").onChange((value) => {
+      verificationToken = value.trim();
     });
   });
   const status = adapter.state.billingAccountLinked ? "Signed in and linked" : "Not signed in";
@@ -202,6 +234,18 @@ function addBillingAccountSettings(containerEl, adapter) {
     } finally {
       button.setDisabled(false);
     }
+  })).addButton((button) => button.setButtonText("Verify account").onClick(async () => {
+    var _a;
+    button.setDisabled(true);
+    try {
+      await verifyBillingAccount(adapter, verificationToken);
+      new import_obsidian.Notice("Billing account verified and this installation was linked.");
+      (_a = adapter.refresh) == null ? void 0 : _a.call(adapter);
+    } catch (error) {
+      new import_obsidian.Notice(error instanceof Error ? error.message : "Billing account verification failed.");
+    } finally {
+      button.setDisabled(false);
+    }
   })).addButton((button) => button.setButtonText("Sign out").setDisabled(!adapter.state.billingAccessToken).onClick(async () => {
     var _a;
     adapter.state.billingAccessToken = "";
@@ -221,6 +265,10 @@ var CONSTANCE_PRICE_IDS = {
   // $1 -> 100 uses
   usd_010: "pri_01m28hkppkk8m3dy56gmmbnrst"
   // $10 -> 1,000 uses
+};
+var CONSTANCE_PLAN_CODES = {
+  usd_001: "standard",
+  usd_010: "ultimate"
 };
 var billingLocks = /* @__PURE__ */ new WeakMap();
 function withBillingLock(plugin, work) {
@@ -361,25 +409,79 @@ async function consumeCaptureUse(plugin, eventId = generateEventId()) {
     return false;
   });
 }
-function openBuyCheckout(plugin, tier) {
+async function createAuthenticatedCheckout(plugin, tier) {
   var _a;
+  const idempotencyKey = `checkout_${generateEventId()}`;
+  const response = await (0, import_obsidian2.requestUrl)({
+    url: `${CONSTANCE_BASE_URL}/api/v1/billing/checkout`,
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${plugin.settings.billingAccessToken}`, "Idempotency-Key": idempotencyKey },
+    body: JSON.stringify({
+      app_id: CONSTANCE_APP_ID,
+      plan_code: CONSTANCE_PLAN_CODES[tier],
+      installation_id: plugin.settings.constanceDeviceId,
+      quantity: 1,
+      coupon_code: null
+    }),
+    throw: false
+  });
+  if (response.status === 401 || response.status === 403) return { kind: "auth-required" };
+  if (response.status < 200 || response.status >= 300) return { kind: "fallback" };
+  const data = (_a = response.json) == null ? void 0 : _a.data;
+  const checkoutUrl = typeof (data == null ? void 0 : data.checkout_url) === "string" ? data.checkout_url : "";
+  return checkoutUrl ? { kind: "ok", checkoutUrl, checkoutId: (data == null ? void 0 : data.checkout_id) ? String(data.checkout_id) : void 0 } : { kind: "fallback" };
+}
+async function pollAuthenticatedCheckout(plugin, checkoutId) {
+  var _a, _b;
+  if (!plugin.settings.billingAccessToken || !plugin.settings.billingAccountLinked) return false;
+  const response = await (0, import_obsidian2.requestUrl)({
+    url: `${CONSTANCE_BASE_URL}/api/v1/billing/checkouts/${encodeURIComponent(checkoutId)}`,
+    method: "GET",
+    headers: { Authorization: `Bearer ${plugin.settings.billingAccessToken}` },
+    throw: false
+  });
+  return response.status >= 200 && response.status < 300 && ((_b = (_a = response.json) == null ? void 0 : _a.data) == null ? void 0 : _b.settled) === true;
+}
+function openBuyCheckout(plugin, tier) {
   if (!plugin.settings.billingAccessToken || !plugin.settings.billingAccountLinked) {
     new import_obsidian2.Notice("Sign in or create a billing account in Kairo settings before buying uses.");
     return;
   }
-  const email = plugin.settings.billingEmail.trim();
-  if (!email || !email.includes("@")) {
-    new import_obsidian2.Notice("Enter a valid billing email in Kairo settings first.");
-    return;
-  }
   const priceId = CONSTANCE_PRICE_IDS[tier];
-  if (!priceId.startsWith("pri_")) {
-    new import_obsidian2.Notice("Kairo billing is not available for this pack yet.");
-    return;
-  }
-  const params = new URLSearchParams({ app_id: CONSTANCE_APP_ID, price_id: priceId, email, external_customer_id: plugin.settings.constanceDeviceId });
-  window.open(`${CONSTANCE_BASE_URL}/buy?${params.toString()}`, "_blank");
-  (_a = plugin.pollAfterCheckout) == null ? void 0 : _a.call(plugin);
+  void (async () => {
+    var _a, _b;
+    try {
+      const checkout = await createAuthenticatedCheckout(plugin, tier);
+      if (checkout.kind === "ok") {
+        window.open(checkout.checkoutUrl, "_blank");
+        (_a = plugin.pollAfterCheckout) == null ? void 0 : _a.call(plugin, checkout.checkoutId);
+        return;
+      }
+      if (checkout.kind === "auth-required") {
+        plugin.settings.billingAccessToken = "";
+        plugin.settings.billingAccountLinked = false;
+        await plugin.persist();
+        new import_obsidian2.Notice("Kairo: your billing session expired. Sign in again before buying uses.");
+        return;
+      }
+    } catch (error) {
+      console.error("Kairo: authenticated checkout request failed", error);
+      new import_obsidian2.Notice("Kairo: checkout status is unknown. Refresh billing and try again.");
+      return;
+    }
+    const email = plugin.settings.billingEmail.trim();
+    if (!priceId.startsWith("pri_")) {
+      new import_obsidian2.Notice("Kairo billing is not available for this pack yet.");
+      return;
+    }
+    if (!email || !email.includes("@")) {
+      new import_obsidian2.Notice("Enter a valid billing email in Kairo settings before using the legacy checkout fallback.");
+      return;
+    }
+    const params = new URLSearchParams({ app_id: CONSTANCE_APP_ID, price_id: priceId, email, external_customer_id: plugin.settings.constanceDeviceId });
+    window.open(`${CONSTANCE_BASE_URL}/buy?${params.toString()}`, "_blank");
+    (_b = plugin.pollAfterCheckout) == null ? void 0 : _b.call(plugin);
+  })();
 }
 
 // src/plugin-support.ts
@@ -734,16 +836,20 @@ var KairoQuickCapturePlugin = class extends import_obsidian4.Plugin {
   refreshShortcut() {
     this.registerGlobalShortcut();
   }
-  pollAfterCheckout() {
+  pollAfterCheckout(checkoutId) {
     if (this.checkoutPollTimer !== void 0) window.clearInterval(this.checkoutPollTimer);
     let attempts = 0;
     this.checkoutPollTimer = window.setInterval(() => {
       attempts += 1;
-      void syncPurchasedUses(this);
-      if (attempts >= 6 && this.checkoutPollTimer !== void 0) {
-        window.clearInterval(this.checkoutPollTimer);
-        this.checkoutPollTimer = void 0;
-      }
+      void (async () => {
+        const settled = checkoutId ? await pollAuthenticatedCheckout(this, checkoutId).catch(() => false) : false;
+        if (settled) await syncPurchasedUses(this);
+        else if (!checkoutId) await syncPurchasedUses(this);
+        if ((settled || attempts >= 6) && this.checkoutPollTimer !== void 0) {
+          window.clearInterval(this.checkoutPollTimer);
+          this.checkoutPollTimer = void 0;
+        }
+      })();
     }, 15e3);
   }
   electron() {

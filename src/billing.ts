@@ -12,6 +12,13 @@ export const CONSTANCE_PRICE_IDS = {
   usd_010: "pri_01m28hkppkk8m3dy56gmmbnrst", // $10 -> 1,000 uses
 } as const;
 
+// Catalog-owned plan codes used by the authenticated checkout endpoint. Price
+// IDs remain only for the legacy /buy fallback.
+export const CONSTANCE_PLAN_CODES = {
+  usd_001: "standard",
+  usd_010: "ultimate",
+} as const;
+
 export interface BillingSettings {
   constanceDeviceId: string;
   billingEmail: string;
@@ -33,8 +40,13 @@ export type LocalUseResult = "free" | "none";
 type BillingPlugin = {
   settings: BillingSettings;
   persist(): Promise<void>;
-  pollAfterCheckout?(): void;
+  pollAfterCheckout?(checkoutId?: string): void;
 };
+
+type AuthenticatedCheckoutResult =
+  | { kind: "ok"; checkoutUrl: string; checkoutId?: string }
+  | { kind: "fallback" }
+  | { kind: "auth-required" };
 
 const billingLocks = new WeakMap<object, Promise<unknown>>();
 
@@ -195,22 +207,79 @@ export async function consumeCaptureUse(plugin: BillingPlugin, eventId = generat
   });
 }
 
+async function createAuthenticatedCheckout(plugin: BillingPlugin, tier: keyof typeof CONSTANCE_PRICE_IDS): Promise<AuthenticatedCheckoutResult> {
+  const idempotencyKey = `checkout_${generateEventId()}`;
+  const response = await requestUrl({
+    url: `${CONSTANCE_BASE_URL}/api/v1/billing/checkout`,
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${plugin.settings.billingAccessToken}`, "Idempotency-Key": idempotencyKey },
+    body: JSON.stringify({
+      app_id: CONSTANCE_APP_ID,
+      plan_code: CONSTANCE_PLAN_CODES[tier],
+      installation_id: plugin.settings.constanceDeviceId,
+      quantity: 1,
+      coupon_code: null,
+    }),
+    throw: false,
+  });
+  if (response.status === 401 || response.status === 403) return { kind: "auth-required" };
+  if (response.status < 200 || response.status >= 300) return { kind: "fallback" };
+  const data = response.json?.data;
+  const checkoutUrl = typeof data?.checkout_url === "string" ? data.checkout_url : "";
+  return checkoutUrl ? { kind: "ok", checkoutUrl, checkoutId: data?.checkout_id ? String(data.checkout_id) : undefined } : { kind: "fallback" };
+}
+
+export async function pollAuthenticatedCheckout(plugin: BillingPlugin, checkoutId: string): Promise<boolean> {
+  if (!plugin.settings.billingAccessToken || !plugin.settings.billingAccountLinked) return false;
+  const response = await requestUrl({
+    url: `${CONSTANCE_BASE_URL}/api/v1/billing/checkouts/${encodeURIComponent(checkoutId)}`,
+    method: "GET",
+    headers: { Authorization: `Bearer ${plugin.settings.billingAccessToken}` },
+    throw: false,
+  });
+  return response.status >= 200 && response.status < 300 && response.json?.data?.settled === true;
+}
+
 export function openBuyCheckout(plugin: BillingPlugin, tier: keyof typeof CONSTANCE_PRICE_IDS): void {
   if (!plugin.settings.billingAccessToken || !plugin.settings.billingAccountLinked) {
     new Notice("Sign in or create a billing account in Kairo settings before buying uses.");
     return;
   }
-  const email = plugin.settings.billingEmail.trim();
-  if (!email || !email.includes("@")) {
-    new Notice("Enter a valid billing email in Kairo settings first.");
-    return;
-  }
   const priceId = CONSTANCE_PRICE_IDS[tier];
-  if (!priceId.startsWith("pri_")) {
-    new Notice("Kairo billing is not available for this pack yet.");
-    return;
-  }
-  const params = new URLSearchParams({ app_id: CONSTANCE_APP_ID, price_id: priceId, email, external_customer_id: plugin.settings.constanceDeviceId, });
-  window.open(`${CONSTANCE_BASE_URL}/buy?${params.toString()}`, "_blank");
-  plugin.pollAfterCheckout?.();
+  void (async () => {
+    try {
+      const checkout = await createAuthenticatedCheckout(plugin, tier);
+      if (checkout.kind === "ok") {
+        window.open(checkout.checkoutUrl, "_blank");
+        plugin.pollAfterCheckout?.(checkout.checkoutId);
+        return;
+      }
+      if (checkout.kind === "auth-required") {
+        plugin.settings.billingAccessToken = "";
+        plugin.settings.billingAccountLinked = false;
+        await plugin.persist();
+        new Notice("Kairo: your billing session expired. Sign in again before buying uses.");
+        return;
+      }
+    } catch (error) {
+      // A transport failure can leave a checkout in an unknown state. Do not
+      // create a second purchase through the fallback in that case.
+      console.error("Kairo: authenticated checkout request failed", error);
+      new Notice("Kairo: checkout status is unknown. Refresh billing and try again.");
+      return;
+    }
+
+    const email = plugin.settings.billingEmail.trim();
+    if (!priceId.startsWith("pri_")) {
+      new Notice("Kairo billing is not available for this pack yet.");
+      return;
+    }
+    if (!email || !email.includes("@")) {
+      new Notice("Enter a valid billing email in Kairo settings before using the legacy checkout fallback.");
+      return;
+    }
+    const params = new URLSearchParams({ app_id: CONSTANCE_APP_ID, price_id: priceId, email, external_customer_id: plugin.settings.constanceDeviceId });
+    window.open(`${CONSTANCE_BASE_URL}/buy?${params.toString()}`, "_blank");
+    plugin.pollAfterCheckout?.();
+  })();
 }

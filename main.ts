@@ -24,13 +24,14 @@ import {
   generateSecureDeviceId,
   normalizeBillingSettings,
   openBuyCheckout,
+  pollAuthenticatedCheckout,
   retryPendingSpendEvents,
   syncPurchasedUses,
 } from "./src/billing";
 import { PluginSupport } from "./src/plugin-support";
 import { addBillingAccountSettings } from "./src/constance-account";
 
-const VERSION = "3.4.8";
+const VERSION = "3.4.16";
 const DEFAULT_TEMPLATE = "- {{time}} — {{text}}\n";
 const DEFAULT_SETTINGS: KairoSettings = {
   shortcut: "Ctrl+Shift+Space",
@@ -335,16 +336,20 @@ export default class KairoQuickCapturePlugin extends Plugin {
     this.registerGlobalShortcut();
   }
 
-  pollAfterCheckout(): void {
+  pollAfterCheckout(checkoutId?: string): void {
     if (this.checkoutPollTimer !== undefined) window.clearInterval(this.checkoutPollTimer);
     let attempts = 0;
     this.checkoutPollTimer = window.setInterval(() => {
       attempts += 1;
-      void syncPurchasedUses(this);
-      if (attempts >= 6 && this.checkoutPollTimer !== undefined) {
-        window.clearInterval(this.checkoutPollTimer);
-        this.checkoutPollTimer = undefined;
-      }
+      void (async () => {
+        const settled = checkoutId ? await pollAuthenticatedCheckout(this, checkoutId).catch(() => false) : false;
+        if (settled) await syncPurchasedUses(this);
+        else if (!checkoutId) await syncPurchasedUses(this);
+        if ((settled || attempts >= 6) && this.checkoutPollTimer !== undefined) {
+          window.clearInterval(this.checkoutPollTimer);
+          this.checkoutPollTimer = undefined;
+        }
+      })();
     }, 15_000);
   }
 
