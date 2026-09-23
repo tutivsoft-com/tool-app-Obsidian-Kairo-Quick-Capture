@@ -31,7 +31,7 @@ import {
 import { PluginSupport } from "./src/plugin-support";
 import { addBillingAccountSettings } from "./src/constance-account";
 
-const VERSION = "3.4.16";
+const VERSION = "3.4.17";
 const DEFAULT_TEMPLATE = "- {{time}} — {{text}}\n";
 const DEFAULT_SETTINGS: KairoSettings = {
   shortcut: "Ctrl+Shift+Space",
@@ -206,6 +206,9 @@ export default class KairoQuickCapturePlugin extends Plugin {
         await this.persist();
         return { state: "queued", id, diagnostic: queued.lastError };
       } catch (persistError) {
+        // A failed persistence attempt must not leave an item eligible for a
+        // later in-memory flush after the user has been told to retry.
+        this.queue = this.queue.filter((item) => item.id !== id);
         queued.lastError = diagnosticSummary(destination, persistError, id);
         return { state: "failed", id, diagnostic: queued.lastError };
       }

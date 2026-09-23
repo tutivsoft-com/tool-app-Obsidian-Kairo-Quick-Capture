@@ -22,9 +22,9 @@ test.after(async () => {
   await rm(temporaryDirectory, { recursive: true, force: true });
 });
 
-test("free uses reset on the local calendar date", () => {
+test("free uses reset on the UTC calendar date", () => {
   const settings = { constanceDeviceId: "device", billingEmail: "", freeUsesRemaining: 0, freeUsesDay: "2026-09-10", purchasedUses: 4 };
-  billing.resetFreeUsesIfNeeded(settings, new Date(2026, 8, 11, 0, 1));
+  billing.resetFreeUsesIfNeeded(settings, new Date(Date.UTC(2026, 8, 11, 0, 1)));
   assert.equal(settings.freeUsesDay, "2026-09-11");
   assert.equal(settings.freeUsesRemaining, 3);
   assert.equal(settings.purchasedUses, 4);
@@ -32,10 +32,25 @@ test("free uses reset on the local calendar date", () => {
 
 test("local consumption uses only the daily free allowance", () => {
   const settings = { constanceDeviceId: "device", billingEmail: "", freeUsesRemaining: 1, freeUsesDay: "2026-09-11", purchasedUses: 1 };
-  assert.equal(billing.consumeLocalUse(settings, new Date(2026, 8, 11)), "free");
-  assert.equal(billing.consumeLocalUse(settings, new Date(2026, 8, 11)), "none");
-  assert.equal(billing.consumeLocalUse(settings, new Date(2026, 8, 11)), "none");
+  assert.equal(billing.consumeLocalUse(settings, new Date(Date.UTC(2026, 8, 11))), "free");
+  assert.equal(billing.consumeLocalUse(settings, new Date(Date.UTC(2026, 8, 11))), "none");
+  assert.equal(billing.consumeLocalUse(settings, new Date(Date.UTC(2026, 8, 11))), "none");
   assert.deepEqual([settings.freeUsesRemaining, settings.purchasedUses], [0, 1]);
+});
+
+test("entitlement polling restores the server free-use and paid balances", async () => {
+  const settings = { constanceDeviceId: "device", billingEmail: "", billingAccessToken: "token", billingAccountLinked: true, freeUsesRemaining: 3, freeUsesDay: "2026-09-21", purchasedUses: 0, pendingSpendEvents: [] };
+  const plugin = { settings, async persist() {} };
+  globalThis.__kairoRequestUrl = async () => ({ status: 200, json: { data: {
+    credits: { balance: 9 },
+    free_usage: { remaining: 1, period_key: "2026-09-22" },
+  } } });
+  try {
+    await billing.syncPurchasedUses(plugin);
+    assert.deepEqual([settings.freeUsesRemaining, settings.freeUsesDay, settings.purchasedUses], [1, "2026-09-22", 9]);
+  } finally {
+    delete globalThis.__kairoRequestUrl;
+  }
 });
 
 test("concurrent local consumption is serialized", async () => {
@@ -102,8 +117,8 @@ test("each post-free capture spends against the server mirror", async () => {
 
 test("catalog price ids are Kairo's provisioned one-time prices", () => {
   assert.equal(billing.CONSTANCE_APP_ID, "kairo-quick-capture");
-  assert.equal(billing.CONSTANCE_PLAN_CODES.usd_001, "standard");
-  assert.equal(billing.CONSTANCE_PLAN_CODES.usd_010, "ultimate");
+  assert.equal(billing.CONSTANCE_PLAN_CODES.usd_001, "one_time");
+  assert.equal(billing.CONSTANCE_PLAN_CODES.usd_010, "standard");
   assert.equal(billing.CONSTANCE_PRICE_IDS.usd_001, "pri_01m28hknyche7mcq4vdgjcp4x6");
   assert.equal(billing.CONSTANCE_PRICE_IDS.usd_010, "pri_01m28hkppkk8m3dy56gmmbnrst");
 });

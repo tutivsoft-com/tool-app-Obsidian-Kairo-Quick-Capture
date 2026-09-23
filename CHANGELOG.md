@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.4.17 - 2026-09-23
+
+- Corrected authenticated checkout pack codes to match the live Constance catalog.
+- Matched the displayed free-use day and balance to Constance's UTC allowance.
+- Prevented failed queue persistence from leaving a capture eligible for later delivery.
+- Clarified billing behavior when storage or billing verification fails.
+
 ## 3.4.16 - 2026-09-22
 
 - Updated the release metadata for the authenticated Constance billing and

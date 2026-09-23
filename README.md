@@ -1,6 +1,6 @@
 # Kairo Quick Capture
 
-Version: `3.4.16`
+Version: `3.4.17`
 
 Kairo is a local-first Obsidian scratchpad for capturing fleeting thoughts quickly and delivering them to an inbox file or dated daily note. It supports plain text, pasted text, URLs, and multiline notes without an internet connection or AI service.
 
@@ -36,19 +36,21 @@ installation id is linked to the signed-in account, and the client sends only
 the app id, installation id, spend amount, and stable idempotency event id for
 usage operations. It never sends captured text to Constance.
 
-Each local calendar day starts with 3 free captures from Constance's
+Each UTC calendar day starts with 3 free captures from Constance's
 account-scoped allowance. After those are used, each capture consumes 1
 purchased credit. The available one-time packs are $1 for 100 uses and $10 for
 1,000 uses. Purchases prefer authenticated catalog-code checkout with an
 idempotency key and poll settlement; the legacy `/buy` URL is retained only as
 a fallback.
 
-A capture is charged once when it is accepted by Kairo—either delivered to its
-destination or durably placed in the local retry queue. Queue retries do not
-charge again. Confirmed exhaustion blocks a capture; a temporary billing
-failure keeps local capture available and is reconciled on the next balance
-sync. The installation id is local plugin data and is not a hardware
-fingerprint.
+A usage claim is made before Kairo attempts delivery, so a storage failure
+after a successful claim can consume a use without saving the capture.
+Captures that reach the retry queue do not incur another claim when retried.
+Confirmed exhaustion blocks a capture; a temporary billing
+failure blocks the capture until the allowance or balance can be verified.
+If a paid spend request has an uncertain result, Kairo keeps its event id for
+reconciliation before allowing another paid capture. The installation id is
+local plugin data and is not a hardware fingerprint.
 
 ## Privacy and threat model
 

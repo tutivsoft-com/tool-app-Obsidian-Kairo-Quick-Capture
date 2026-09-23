@@ -15,8 +15,8 @@ export const CONSTANCE_PRICE_IDS = {
 // Catalog-owned plan codes used by the authenticated checkout endpoint. Price
 // IDs remain only for the legacy /buy fallback.
 export const CONSTANCE_PLAN_CODES = {
-  usd_001: "standard",
-  usd_010: "ultimate",
+  usd_001: "one_time",
+  usd_010: "standard",
 } as const;
 
 export interface BillingSettings {
@@ -61,7 +61,7 @@ function withBillingLock<T>(plugin: BillingPlugin, work: () => Promise<T>): Prom
 
 export function currentDayKey(date = new Date()): string {
   const pad = (value: number) => String(value).padStart(2, "0");
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+  return `${date.getUTCFullYear()}-${pad(date.getUTCMonth() + 1)}-${pad(date.getUTCDate())}`;
 }
 
 export function generateSecureDeviceId(): string {
@@ -114,7 +114,13 @@ export function consumeLocalUse(settings: BillingSettings, date = new Date()): L
   return "none";
 }
 
-async function fetchEntitlements(plugin: BillingPlugin): Promise<number> {
+interface EntitlementSnapshot {
+  purchasedUses: number;
+  freeUsesRemaining?: number;
+  freeUsesDay?: string;
+}
+
+async function fetchEntitlements(plugin: BillingPlugin): Promise<EntitlementSnapshot> {
   const response = await requestUrl({
     url: `${CONSTANCE_BASE_URL}/api/v1/billing/entitlements/me?${new URLSearchParams({ app_id: CONSTANCE_APP_ID, installation_id: plugin.settings.constanceDeviceId }).toString()}`,
     method: "GET",
@@ -122,7 +128,17 @@ async function fetchEntitlements(plugin: BillingPlugin): Promise<number> {
     throw: false,
   });
   if (response.status < 200 || response.status >= 300) throw new Error(`Entitlement sync failed: HTTP ${response.status}`);
-  return Math.max(0, Number(response.json?.data?.credits?.balance) || 0);
+  const data = response.json?.data;
+  const freeUsage = data?.free_usage;
+  const freeRemaining = Number(freeUsage?.remaining);
+  const freeDay = typeof freeUsage?.period_key === "string" && /^\d{4}-\d{2}-\d{2}$/.test(freeUsage.period_key)
+    ? freeUsage.period_key
+    : undefined;
+  return {
+    purchasedUses: Math.max(0, Number(data?.credits?.balance) || 0),
+    freeUsesRemaining: Number.isFinite(freeRemaining) ? Math.max(0, Math.min(FREE_USES_PER_DAY, Math.trunc(freeRemaining))) : undefined,
+    freeUsesDay: freeDay,
+  };
 }
 
 export async function syncPurchasedUses(plugin: BillingPlugin): Promise<void> {
@@ -130,7 +146,10 @@ export async function syncPurchasedUses(plugin: BillingPlugin): Promise<void> {
     if (!plugin.settings.constanceDeviceId) return;
     try {
       if (!plugin.settings.billingAccessToken || !plugin.settings.billingAccountLinked) return;
-      plugin.settings.purchasedUses = await fetchEntitlements(plugin);
+      const snapshot = await fetchEntitlements(plugin);
+      plugin.settings.purchasedUses = snapshot.purchasedUses;
+      if (snapshot.freeUsesRemaining !== undefined) plugin.settings.freeUsesRemaining = snapshot.freeUsesRemaining;
+      if (snapshot.freeUsesDay) plugin.settings.freeUsesDay = snapshot.freeUsesDay;
       await plugin.persist();
     } catch (error) {
       console.error("Kairo: Constance entitlement sync failed", error);

@@ -267,8 +267,8 @@ var CONSTANCE_PRICE_IDS = {
   // $10 -> 1,000 uses
 };
 var CONSTANCE_PLAN_CODES = {
-  usd_001: "standard",
-  usd_010: "ultimate"
+  usd_001: "one_time",
+  usd_010: "standard"
 };
 var billingLocks = /* @__PURE__ */ new WeakMap();
 function withBillingLock(plugin, work) {
@@ -282,7 +282,7 @@ function withBillingLock(plugin, work) {
 }
 function currentDayKey(date = /* @__PURE__ */ new Date()) {
   const pad = (value) => String(value).padStart(2, "0");
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+  return `${date.getUTCFullYear()}-${pad(date.getUTCMonth() + 1)}-${pad(date.getUTCDate())}`;
 }
 function generateSecureDeviceId() {
   const bytes = new Uint8Array(16);
@@ -316,7 +316,7 @@ function resetFreeUsesIfNeeded(settings, date = /* @__PURE__ */ new Date()) {
   }
 }
 async function fetchEntitlements(plugin) {
-  var _a, _b, _c;
+  var _a, _b;
   const response = await (0, import_obsidian2.requestUrl)({
     url: `${CONSTANCE_BASE_URL}/api/v1/billing/entitlements/me?${new URLSearchParams({ app_id: CONSTANCE_APP_ID, installation_id: plugin.settings.constanceDeviceId }).toString()}`,
     method: "GET",
@@ -324,14 +324,25 @@ async function fetchEntitlements(plugin) {
     throw: false
   });
   if (response.status < 200 || response.status >= 300) throw new Error(`Entitlement sync failed: HTTP ${response.status}`);
-  return Math.max(0, Number((_c = (_b = (_a = response.json) == null ? void 0 : _a.data) == null ? void 0 : _b.credits) == null ? void 0 : _c.balance) || 0);
+  const data = (_a = response.json) == null ? void 0 : _a.data;
+  const freeUsage = data == null ? void 0 : data.free_usage;
+  const freeRemaining = Number(freeUsage == null ? void 0 : freeUsage.remaining);
+  const freeDay = typeof (freeUsage == null ? void 0 : freeUsage.period_key) === "string" && /^\d{4}-\d{2}-\d{2}$/.test(freeUsage.period_key) ? freeUsage.period_key : void 0;
+  return {
+    purchasedUses: Math.max(0, Number((_b = data == null ? void 0 : data.credits) == null ? void 0 : _b.balance) || 0),
+    freeUsesRemaining: Number.isFinite(freeRemaining) ? Math.max(0, Math.min(FREE_USES_PER_DAY, Math.trunc(freeRemaining))) : void 0,
+    freeUsesDay: freeDay
+  };
 }
 async function syncPurchasedUses(plugin) {
   return withBillingLock(plugin, async () => {
     if (!plugin.settings.constanceDeviceId) return;
     try {
       if (!plugin.settings.billingAccessToken || !plugin.settings.billingAccountLinked) return;
-      plugin.settings.purchasedUses = await fetchEntitlements(plugin);
+      const snapshot = await fetchEntitlements(plugin);
+      plugin.settings.purchasedUses = snapshot.purchasedUses;
+      if (snapshot.freeUsesRemaining !== void 0) plugin.settings.freeUsesRemaining = snapshot.freeUsesRemaining;
+      if (snapshot.freeUsesDay) plugin.settings.freeUsesDay = snapshot.freeUsesDay;
       await plugin.persist();
     } catch (error) {
       console.error("Kairo: Constance entitlement sync failed", error);
@@ -712,6 +723,7 @@ var KairoQuickCapturePlugin = class extends import_obsidian4.Plugin {
         await this.persist();
         return { state: "queued", id, diagnostic: queued.lastError };
       } catch (persistError) {
+        this.queue = this.queue.filter((item) => item.id !== id);
         queued.lastError = diagnosticSummary(destination, persistError, id);
         return { state: "failed", id, diagnostic: queued.lastError };
       }
