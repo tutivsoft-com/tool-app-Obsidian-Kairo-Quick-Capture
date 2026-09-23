@@ -1,16 +1,21 @@
 # Changelog
 
+## 3.4.18 - 2026-09-23
+
+- Simplified Obsidian command palette labels by removing repeated plugin-name prefixes.
+
 ## 3.4.17 - 2026-09-23
 
-- Corrected authenticated checkout pack codes to match the live Constance catalog.
-- Matched the displayed free-use day and balance to Constance's UTC allowance.
+- Used authenticated checkout with catalog pack codes verified against the live Constance catalog.
 - Prevented failed queue persistence from leaving a capture eligible for later delivery.
 - Clarified billing behavior when storage or billing verification fails.
 
 ## 3.4.16 - 2026-09-22
 
-- Updated the release metadata for the authenticated Constance billing and
-  checkout maintenance pass.
+- Added Constance email-verification completion for new billing accounts and
+  prevented linked-account email drift during checkout.
+- Synced the authoritative UTC daily free-use balance during entitlement polls.
+- Rebuilt the publish bundle and synchronized current billing/version docs.
 
 ## 3.4.15 - 2026-09-21
 

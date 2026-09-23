@@ -143,7 +143,7 @@ export default class KairoQuickCapturePlugin extends Plugin {
     });
     this.addCommand({
       id: "run-setup",
-      name: "Run Kairo setup",
+      name: "Run setup",
       callback: () => new SetupModal(this.app, this).open(),
     });
     this.addSettingTab(new KairoSettingTab(this.app, this));
