@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.4.19 - 2026-09-24
+
+- Added product feature, architecture, and marketing documentation.
+- Corrected requirements and privacy copy to describe online allowance verification and local-only capture content.
+
 ## 3.4.18 - 2026-09-23
 
 - Simplified Obsidian command palette labels by removing repeated plugin-name prefixes.

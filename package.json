@@ -1,8 +1,8 @@
 {
   "name": "kairo-quick-capture",
-  "version": "3.4.17",
+  "version": "3.4.19",
   "description": "Fast, local-first scratchpad capture for Obsidian.",
-  "main": "publish/main.js",
+  "main": "main.js",
   "scripts": {
     "build": "tsc --noEmit && node esbuild.config.mjs production",
     "dev": "node esbuild.config.mjs",

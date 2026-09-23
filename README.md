@@ -1,8 +1,8 @@
 # Kairo Quick Capture
 
-Version: `3.4.18`
+Version: `3.4.19`
 
-Kairo is a local-first Obsidian scratchpad for capturing fleeting thoughts quickly and delivering them to an inbox file or dated daily note. It supports plain text, pasted text, URLs, and multiline notes without an internet connection or AI service.
+Kairo is a local-first Obsidian scratchpad for capturing fleeting thoughts quickly and delivering them to an inbox file or dated daily note. It supports plain text, pasted text, URLs, and multiline notes without an AI service. Each accepted capture needs an online billing allowance or credit verification.
 
 ## What it does
 
@@ -61,7 +61,8 @@ data and is not a hardware fingerprint.
 
 ## Privacy and threat model
 
-Kairo has no AI path, telemetry, passwords, or cloud queue. Captured text is
+Kairo has no AI path, analytics, or cloud queue. The billing account password
+is used for sign-in and is not retained as a password by Kairo. Captured text is
 written only to the configured current-vault destination or Obsidian's plugin
 data while queued. Queue data is plain local application data and inherits the
 operating system and vault permissions. Anyone who can read the vault or
@@ -75,10 +76,17 @@ The plugin does not promise capture while Obsidian is fully closed: an Obsidian 
 
 ## Commands
 
-- **Kairo: Open quick capture**
-- **Kairo: Flush queued captures**
-- **Kairo: Show queued captures**
+- **Kairo Quick Capture: Open quick capture**
+- **Kairo Quick Capture: Flush queued captures**
+- **Kairo Quick Capture: Show queued captures**
 - **Kairo Quick Capture: Run setup**
+
+## Product documentation
+
+- [Features](FEATURES.md)
+- [Requirements](REQUIREMENTS.md)
+- [Software Architecture](SOFTWARE_ARCHITECTURE.md)
+- [Marketing](MARKETING.md)
 
 ## License
 

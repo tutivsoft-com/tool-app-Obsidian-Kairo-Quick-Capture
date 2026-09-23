@@ -1,15 +1,15 @@
 # Kairo Quick Capture — Product Requirements
 
-Status: implemented — 3.4.9 billing/live-catalog release
+Status: implemented — 3.4.19 documentation and release metadata
 
 ## Product promise
 
-Kairo lets a user capture a thought in seconds from anywhere on the desktop, even when the Obsidian window is closed, and reliably delivers it to the user’s configured inbox or daily note.
+Kairo provides a fast capture window for an active Obsidian desktop session and appends accepted captures to a configured inbox or daily note in the current vault. Captured content remains local. Each accepted capture requires a signed-in Constance account and a server-verified free allowance or purchased credit.
 
 ## Product principles
 
 - Capture must be faster than opening Obsidian.
-- The capture path must work offline and must not require AI.
+- Keep capture text out of billing requests and do not require AI.
 - Never lose text because a vault, destination, or Obsidian process is unavailable.
 - Keep the interface to one small window and a few obvious actions.
 - Do not silently send captured content to a cloud service.
@@ -19,13 +19,13 @@ Kairo lets a user capture a thought in seconds from anywhere on the desktop, eve
 - A user has a fleeting idea while working in another application.
 - A user wants to capture clipboard text, a URL, or a short task without context switching.
 - A user wants everything captured today in one inbox or daily note.
-- A user captures thoughts while Obsidian is closed or busy.
+- A user captures thoughts while Obsidian is open or a vault destination is busy.
 
 ## MVP requirements
 
 ### Capture window
 
-1. Provide a configurable global keyboard shortcut to show, focus, and hide the scratchpad.
+1. Provide an Obsidian command hotkey and an optional desktop-wide shortcut while Obsidian is running.
 2. Open as a small floating desktop window that stays above other windows while active.
 3. Focus the text area automatically and support keyboard-only submission and dismissal.
 4. Provide clear actions for Save, Save and close, and Cancel.
@@ -60,12 +60,12 @@ Kairo lets a user capture a thought in seconds from anywhere on the desktop, eve
 
 ### Billing and usage
 
-24. Allow 3 free captures per local calendar day, resetting from the local calendar date.
+24. Allow 3 free captures per UTC calendar day, resetting from the server's UTC period.
 25. After the free allowance, require 1 purchased credit for each accepted capture.
-26. Offer one-time packs of $1 for 100 uses and $10 for 1,000 uses through Constance's authenticated account checkout and credit endpoints.
-27. Keep the Constance app id exactly `kairo-quick-capture`; do not put shared signing secrets in the plugin. This backend-less client does not use signed callbacks.
-28. Use a stable idempotency event id for each free-usage claim and paid spend attempt, and never charge queued-capture retries again.
-29. Prefer authenticated catalog plan codes (`standard` and `ultimate`) with an `Idempotency-Key`, poll checkout settlement, and retain the real catalog price ids only for the legacy `/buy` fallback.
+26. Offer one-time packs of $1 for 100 uses and $10 for 1,000 uses through Constance's authenticated account endpoints and `/buy` checkout redirect.
+27. Keep the Constance app id exactly `kairo-quick-capture`; do not put shared signing secrets in the plugin.
+28. Use a stable idempotency event id for each spend attempt and never charge queued-capture retries again.
+29. Keep the real catalog price ids synchronized in source and publish, and fail closed when usage cannot be verified. A billing failure blocks delivery; a vault-write failure after an accepted use can be retried locally.
 
 ## Optional AI features
 
@@ -98,9 +98,9 @@ AI must run only after the capture is safely stored, require an explicit per-cap
 
 - A new user can complete setup and save a capture in under one minute.
 - A normal capture reaches the configured note in two interactions or fewer after the shortcut is pressed.
-- Captures made while Obsidian is closed are delivered after the vault becomes available.
+- Captures accepted by billing are delivered or retained in the local retry queue after a vault write failure.
 - A failed write leaves the complete text in a recoverable queue.
 - Repeated retries never create duplicate entries.
-- Three captures are free each local calendar day; later accepted captures consume one purchased use each.
+- Three captures are free each UTC calendar day; later accepted captures consume one purchased use each.
 - Concurrent captures do not overspend local allowances or duplicate a server credit spend.
-- The MVP remains fully useful with AI disabled and without an internet connection.
+- Every accepted capture has a verified free allowance or paid credit; a network connection is required for this verification.

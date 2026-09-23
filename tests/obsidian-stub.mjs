@@ -6,6 +6,10 @@ export class Notice {
 
 export class Setting {
   constructor() {}
+  setName() { return this; }
+  setDesc() { return this; }
+  addText() { return this; }
+  addButton() { return this; }
 }
 
 export async function requestUrl(options) {

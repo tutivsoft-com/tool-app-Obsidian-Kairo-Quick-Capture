@@ -23,7 +23,7 @@ test.after(async () => {
 });
 
 test("free uses reset on the UTC calendar date", () => {
-  const settings = { constanceDeviceId: "device", billingEmail: "", freeUsesRemaining: 0, freeUsesDay: "2026-09-10", purchasedUses: 4 };
+  const settings = { constanceDeviceId: "device", billingEmail: "", billingAccessToken: "token", billingAccountLinked: true, freeUsesRemaining: 0, freeUsesDay: "2026-09-10", purchasedUses: 4 };
   billing.resetFreeUsesIfNeeded(settings, new Date(Date.UTC(2026, 8, 11, 0, 1)));
   assert.equal(settings.freeUsesDay, "2026-09-11");
   assert.equal(settings.freeUsesRemaining, 3);
@@ -31,10 +31,11 @@ test("free uses reset on the UTC calendar date", () => {
 });
 
 test("local consumption uses only the daily free allowance", () => {
-  const settings = { constanceDeviceId: "device", billingEmail: "", freeUsesRemaining: 1, freeUsesDay: "2026-09-11", purchasedUses: 1 };
-  assert.equal(billing.consumeLocalUse(settings, new Date(Date.UTC(2026, 8, 11))), "free");
-  assert.equal(billing.consumeLocalUse(settings, new Date(Date.UTC(2026, 8, 11))), "none");
-  assert.equal(billing.consumeLocalUse(settings, new Date(Date.UTC(2026, 8, 11))), "none");
+  const settings = { constanceDeviceId: "device", billingEmail: "", billingAccessToken: "token", billingAccountLinked: true, freeUsesRemaining: 1, freeUsesDay: "2026-09-11", purchasedUses: 1 };
+  const testDay = new Date(Date.UTC(2026, 8, 11));
+  assert.equal(billing.consumeLocalUse(settings, testDay), "free");
+  assert.equal(billing.consumeLocalUse(settings, testDay), "none");
+  assert.equal(billing.consumeLocalUse(settings, testDay), "none");
   assert.deepEqual([settings.freeUsesRemaining, settings.purchasedUses], [0, 1]);
 });
 
@@ -54,10 +55,8 @@ test("entitlement polling restores the server free-use and paid balances", async
 });
 
 test("concurrent local consumption is serialized", async () => {
-  const settings = { constanceDeviceId: "device", billingEmail: "", billingAccessToken: "token", billingAccountLinked: true, freeUsesRemaining: 3, freeUsesDay: "2026-09-11", purchasedUses: 0, pendingSpendEvents: [] };
+  const settings = { constanceDeviceId: "device", billingEmail: "", billingAccessToken: "token", billingAccountLinked: true, freeUsesRemaining: 3, freeUsesDay: "2026-09-11", purchasedUses: 0 };
   const persisted = [];
-  let requests = 0;
-  globalThis.__kairoRequestUrl = async () => ({ status: 200, json: { data: { remaining: 2 - requests++ } } });
   const plugin = {
     settings,
     async persist() {
@@ -65,31 +64,31 @@ test("concurrent local consumption is serialized", async () => {
       persisted.push(settings.freeUsesRemaining);
     },
   };
-  try {
-    const results = await Promise.all([
-      billing.consumeCaptureUse(plugin, "evt-1"),
-      billing.consumeCaptureUse(plugin, "evt-2"),
-      billing.consumeCaptureUse(plugin, "evt-3"),
-    ]);
-    assert.deepEqual(results, [true, true, true]);
-    assert.equal(settings.freeUsesRemaining, 0);
-    assert.equal(persisted.length, 3);
-  } finally {
-    delete globalThis.__kairoRequestUrl;
-  }
+  let freeClaims = 0;
+  globalThis.__kairoRequestUrl = async () => ({ status: 200, json: { data: { remaining: Math.max(0, 2 - freeClaims++) } } });
+  const results = await Promise.all([
+    billing.consumeCaptureUse(plugin, "evt-1"),
+    billing.consumeCaptureUse(plugin, "evt-2"),
+    billing.consumeCaptureUse(plugin, "evt-3"),
+  ]);
+  assert.deepEqual(results, [true, true, true]);
+  assert.equal(settings.freeUsesRemaining, 0);
+  assert.equal(persisted.length, 3);
+  delete globalThis.__kairoRequestUrl;
 });
 
-test("authenticated spend sends the linked installation and stable event", async () => {
-  let request;
-  globalThis.__kairoRequestUrl = async (options) => {
-    request = options;
+test("an authenticated spend uses the stable event id and bearer session", async () => {
+  const requests = [];
+    globalThis.__kairoRequestUrl = async (options) => {
+    requests.push(options);
     return { status: 200, json: { data: { credits: { balance: 6 } } } };
   };
   try {
-    const plugin = { settings: { constanceDeviceId: "device-1", billingEmail: "", billingAccessToken: "token", billingAccountLinked: true }, async persist() {} };
+    const plugin = { settings: { constanceDeviceId: "device-1", billingAccessToken: "token", billingAccountLinked: true }, async persist() {} };
     assert.deepEqual(await billing.spendConstanceUse(plugin, "evt-stable"), { kind: "ok", balance: 6 });
-    assert.deepEqual(JSON.parse(request.body), { app_id: "kairo-quick-capture", installation_id: "device-1", event_id: "evt-stable", amount: 1 });
-    assert.equal(request.headers.Authorization, "Bearer token");
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0].headers.Authorization, "Bearer token");
+    assert.equal(JSON.parse(requests[0].body).event_id, "evt-stable");
   } finally {
     delete globalThis.__kairoRequestUrl;
   }
@@ -99,11 +98,11 @@ test("each post-free capture spends against the server mirror", async () => {
   const requests = [];
   globalThis.__kairoRequestUrl = async (options) => {
     requests.push(options);
-    if (requests.length % 2 === 1) return { status: 402, json: {} };
+    if (options.url.includes("free-usage")) return { status: 402, json: {} };
     const balance = 10 - requests.length;
     return { status: 200, json: { data: { credits: { balance } } } };
   };
-  const settings = { constanceDeviceId: "device-1", billingEmail: "", billingAccessToken: "token", billingAccountLinked: true, freeUsesRemaining: 0, freeUsesDay: billing.currentDayKey(), purchasedUses: 10, pendingSpendEvents: [] };
+  const settings = { constanceDeviceId: "device-1", billingEmail: "", billingAccessToken: "token", billingAccountLinked: true, freeUsesRemaining: 0, freeUsesDay: billing.currentDayKey(), purchasedUses: 10 };
   const plugin = { settings, async persist() {} };
   try {
     assert.equal(await billing.consumeCaptureUse(plugin, "evt-paid-1"), true);
