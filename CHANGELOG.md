@@ -1,5 +1,9 @@
 # Changelog
 
+## 3.4.22 - 2026-09-25
+
+- Synchronized the release version across release metadata and current product documentation; plugin behavior is unchanged.
+
 ## 3.4.19 - 2026-09-24
 
 - Added product feature, architecture, and marketing documentation.
