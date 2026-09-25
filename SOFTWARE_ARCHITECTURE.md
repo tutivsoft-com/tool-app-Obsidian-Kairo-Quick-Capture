@@ -1,6 +1,6 @@
 # Kairo Quick Capture Software Architecture
 
-Version: 3.4.19
+Version: 3.4.24
 
 ## Runtime boundary
 
@@ -30,3 +30,9 @@ Settings, billing session state, pending spend events, and retry-queue entries a
 ## Build and release layout
 
 TypeScript in main.ts and src/ is bundled with esbuild into publish/main.js. The publish folder contains the matching manifest, stylesheet, license, source snapshot, and public product documentation. Release metadata is checked by scripts/check-release.mjs; release assets are main.js, manifest.json, and styles.css.
+
+<!-- one-click-workflow:start -->
+## Workflow defaults (v3.4.24)
+
+Kairo opens its capture form directly; there is no first-run setup screen. Destination validation is available on demand in Settings.
+<!-- one-click-workflow:end -->

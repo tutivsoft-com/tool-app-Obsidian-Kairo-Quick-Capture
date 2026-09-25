@@ -46,7 +46,7 @@ Kairo provides a fast capture window for an active Obsidian desktop session and 
 ### Configuration
 
 15. Provide simple settings for shortcut, vault, destination mode, daily-note format, template, timestamp format, and launch behavior.
-16. Provide a first-run setup flow that validates the vault and writes a test capture only after confirmation.
+16. Keep destination configuration and validation in Settings; never open first-run setup or write a test capture automatically.
 17. Allow the user to choose whether the window closes after saving.
 18. Allow optional launch-at-login on supported desktop platforms, disabled by default.
 19. Provide a command to open settings and a command to flush queued captures.
@@ -104,3 +104,9 @@ AI must run only after the capture is safely stored, require an explicit per-cap
 - Three captures are free each UTC calendar day; later accepted captures consume one purchased use each.
 - Concurrent captures do not overspend local allowances or duplicate a server credit spend.
 - Every accepted capture has a verified free allowance or paid credit; a network connection is required for this verification.
+
+<!-- one-click-workflow:start -->
+## Workflow defaults (v3.4.24)
+
+Kairo opens its capture form directly; there is no first-run setup screen. Destination validation is available on demand in Settings.
+<!-- one-click-workflow:end -->

@@ -616,7 +616,6 @@ var DEFAULT_SETTINGS = {
   createMissing: false,
   closeAfterSaving: true,
   launchAtLogin: false,
-  setupCompleted: false,
   constanceDeviceId: "",
   billingEmail: "",
   billingAccessToken: "",
@@ -656,6 +655,9 @@ var KairoQuickCapturePlugin = class extends import_obsidian4.Plugin {
       hotkeys: [{ modifiers: ["Mod", "Shift"], key: "K" }],
       callback: () => this.openCapture()
     });
+    this.registerEvent(this.app.workspace.on("editor-menu", (menu, editor, info) => this.addEditorMenuItems(menu, editor, info.file)));
+    this.registerEvent(this.app.workspace.on("file-menu", (menu, file) => this.addFileMenuItems(menu, file)));
+    this.registerEvent(this.app.workspace.on("files-menu", (menu, files) => this.addFilesMenuItems(menu, files)));
     this.addCommand({
       id: "flush-queue",
       name: "Flush queued captures",
@@ -666,18 +668,12 @@ var KairoQuickCapturePlugin = class extends import_obsidian4.Plugin {
       name: "Show queued captures",
       callback: () => new QueueModal(this.app, this).open()
     });
-    this.addCommand({
-      id: "run-setup",
-      name: "Run setup",
-      callback: () => new SetupModal(this.app, this).open()
-    });
     this.addSettingTab(new KairoSettingTab(this.app, this));
     this.registerInterval(window.setInterval(() => void this.flushQueue(false), 6e4));
     this.app.workspace.onLayoutReady(() => {
       this.registerGlobalShortcut();
       void this.flushQueue(false);
       void syncPurchasedUses(this).then(() => retryPendingSpendEvents(this));
-      if (!this.settings.setupCompleted) window.setTimeout(() => new SetupModal(this.app, this).open(), 500);
     });
   }
   onunload() {
@@ -693,8 +689,30 @@ var KairoQuickCapturePlugin = class extends import_obsidian4.Plugin {
     this.persistChain = write;
     await write;
   }
-  openCapture() {
-    new CaptureModal(this.app, this).open();
+  openCapture(initialText = "") {
+    new CaptureModal(this.app, this, initialText).open();
+  }
+  addEditorMenuItems(menu, editor, file) {
+    const selection = editor.getSelection().trim();
+    if (selection) menu.addItem((item) => item.setTitle("Kairo: Quick capture selected text").setIcon("capture").onClick(() => this.openCapture(selection)));
+    if (file instanceof import_obsidian4.TFile && file.extension.toLowerCase() === "md") this.addNoteLinkMenuItem(menu, file);
+  }
+  addFileMenuItems(menu, file) {
+    if (file instanceof import_obsidian4.TFile && file.extension.toLowerCase() === "md") this.addNoteLinkMenuItem(menu, file);
+  }
+  addFilesMenuItems(menu, selected) {
+    const paths = /* @__PURE__ */ new Set();
+    for (const entry of selected) {
+      if (entry instanceof import_obsidian4.TFile && entry.extension.toLowerCase() === "md") paths.add(entry.path);
+      else if (entry instanceof import_obsidian4.TFolder) {
+        for (const file of this.app.vault.getMarkdownFiles()) if (file.path.startsWith(`${entry.path}/`)) paths.add(file.path);
+      }
+    }
+    const links = [...paths].map((path) => this.app.vault.getAbstractFileByPath(path)).filter((file) => file instanceof import_obsidian4.TFile).map((file) => `[[${file.basename}]]`);
+    if (links.length > 1) menu.addItem((item) => item.setTitle(`Kairo: Capture links to ${links.length} selected notes`).setIcon("links-coming-in").onClick(() => this.openCapture(links.join("\n"))));
+  }
+  addNoteLinkMenuItem(menu, file) {
+    menu.addItem((item) => item.setTitle("Kairo: Quick capture link to this note").setIcon("link").onClick(() => this.openCapture(`[[${file.basename}]]`)));
   }
   destinationFor(date = /* @__PURE__ */ new Date()) {
     const relative = this.settings.destinationMode === "daily" ? dailyNotePath(this.settings.dailyFolder, date, this.settings.dailyFormat) : normalizeVaultPath(this.settings.inboxPath);
@@ -875,9 +893,10 @@ var KairoQuickCapturePlugin = class extends import_obsidian4.Plugin {
   }
 };
 var CaptureModal = class extends import_obsidian4.Modal {
-  constructor(app, plugin) {
+  constructor(app, plugin, initialText = "") {
     super(app);
     this.plugin = plugin;
+    this.initialText = initialText;
   }
   onOpen() {
     this.modalEl.addClass("kairo-capture-modal");
@@ -885,6 +904,7 @@ var CaptureModal = class extends import_obsidian4.Modal {
     this.contentEl.empty();
     this.contentEl.createEl("p", { text: "Capture locally; Kairo will deliver it to your configured destination." });
     this.textarea = this.contentEl.createEl("textarea", { attr: { ariaLabel: "Capture text", rows: "7", placeholder: "What do you want to remember?" } });
+    this.textarea.value = this.initialText;
     this.status = this.contentEl.createDiv({ cls: "kairo-status", attr: { role: "status", "aria-live": "polite" } });
     this.status.setText("Ready");
     const actions = this.contentEl.createDiv({ cls: "kairo-actions" });
@@ -980,53 +1000,6 @@ var QueueModal = class extends import_obsidian4.Modal {
     this.contentEl.empty();
   }
 };
-var SetupModal = class extends import_obsidian4.Modal {
-  constructor(app, plugin) {
-    super(app);
-    this.plugin = plugin;
-  }
-  onOpen() {
-    this.titleEl.setText("Set up Kairo");
-    this.contentEl.empty();
-    this.contentEl.createEl("p", { text: "Kairo writes only to the current vault. Configure a destination in settings, validate it, then explicitly confirm a test capture." });
-    const result = this.contentEl.createDiv({ cls: "kairo-status", attr: { role: "status", "aria-live": "polite" } });
-    const validate = this.contentEl.createEl("button", { text: "Validate destination" });
-    const test = this.contentEl.createEl("button", { text: "Confirm and write test capture", cls: "mod-cta" });
-    const later = this.contentEl.createEl("button", { text: "Skip for now" });
-    validate.addEventListener("click", () => void this.validate(result));
-    test.addEventListener("click", () => void this.writeTest(result));
-    later.addEventListener("click", () => this.close());
-  }
-  async validate(result) {
-    var _a;
-    const check = await this.plugin.validateDestination();
-    result.setText(check.ok ? `Ready: ${check.path}` : (_a = check.reason) != null ? _a : "Destination is not ready.");
-  }
-  async writeTest(result) {
-    var _a;
-    const check = await this.plugin.validateDestination();
-    if (!check.ok) {
-      result.setText((_a = check.reason) != null ? _a : "Configure a destination first.");
-      return;
-    }
-    try {
-      const capture = await this.plugin.capture("Kairo setup test \u2014 safe to delete.");
-      if (capture.state !== "saved") {
-        result.setText(capture.state === "queued" ? "The test capture was queued; setup will finish after the destination becomes available." : "The test capture could not be persisted. Setup is not marked complete.");
-        return;
-      }
-      this.plugin.settings.setupCompleted = true;
-      await this.plugin.persist();
-      result.setText("Setup complete. You can delete the test capture if you like.");
-      new import_obsidian4.Notice("Kairo setup complete.");
-    } catch (error) {
-      result.setText(error instanceof Error ? error.message : "Setup test failed.");
-    }
-  }
-  onClose() {
-    this.contentEl.empty();
-  }
-};
 var KairoSettingTab = class extends import_obsidian4.PluginSettingTab {
   constructor(app, plugin) {
     super(app, plugin);
@@ -1090,7 +1063,7 @@ var KairoSettingTab = class extends import_obsidian4.PluginSettingTab {
       this.plugin.settings.template = value || DEFAULT_TEMPLATE;
       await this.plugin.persist();
     }));
-    new import_obsidian4.Setting(containerEl).setName("Create missing destinations").setDesc("Off by default. When enabled, Kairo may create the configured Markdown file after an explicit setup/test action or capture.").addToggle((toggle) => toggle.setValue(this.plugin.settings.createMissing).onChange(async (value) => {
+    new import_obsidian4.Setting(containerEl).setName("Create missing destinations").setDesc("When enabled, Kairo creates the configured Markdown file on the first capture.").addToggle((toggle) => toggle.setValue(this.plugin.settings.createMissing).onChange(async (value) => {
       this.plugin.settings.createMissing = value;
       await this.plugin.persist();
     }));
@@ -1104,7 +1077,11 @@ var KairoSettingTab = class extends import_obsidian4.PluginSettingTab {
       await this.plugin.persist();
     }));
     new import_obsidian4.Setting(containerEl).setName("Queue").setDesc(`${this.plugin.queue.length} capture${this.plugin.queue.length === 1 ? "" : "s"} waiting for delivery.`).addButton((button) => button.setButtonText("Show queue").onClick(() => new QueueModal(this.app, this.plugin).open())).addButton((button) => button.setButtonText("Flush now").onClick(() => void this.plugin.flushQueue(true)));
-    new import_obsidian4.Setting(containerEl).setName("First-run setup").setDesc(this.plugin.settings.setupCompleted ? "Setup has been completed." : "Validate the destination and write a confirmed test capture.").addButton((button) => button.setButtonText("Open setup").onClick(() => new SetupModal(this.app, this.plugin).open()));
+    new import_obsidian4.Setting(containerEl).setName("Validate destination").setDesc("Check the configured destination without writing a test note.").addButton((button) => button.setButtonText("Validate").onClick(async () => {
+      var _a;
+      const result = await this.plugin.validateDestination();
+      new import_obsidian4.Notice(result.ok ? `Kairo: destination ready at ${result.path}.` : `Kairo: ${(_a = result.reason) != null ? _a : "destination is not ready"}`);
+    }));
     void syncPurchasedUses(this.plugin).then(() => this.renderUsageSummary());
   }
   renderUsageSummary() {

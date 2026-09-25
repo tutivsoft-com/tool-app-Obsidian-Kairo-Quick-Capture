@@ -1,4 +1,4 @@
-﻿# Top 10 Benefits of Kairo Quick Capture
+# Top 10 Benefits of Kairo Quick Capture
 
 1. **Frictionless Keyboard-First Capture Modal**
    - **Benefit:** Capture fleeting thoughts instantly without breaking your reading or writing workflow.
@@ -39,3 +39,9 @@
 10. **Non-Intrusive Diagnostics & Queue Inspector**
     - **Benefit:** Check pending captures and queue health without exposing sensitive note content in logs.
     - **Example:** Open the built-in queue viewer to confirm all captured items were safely delivered to your target note.
+
+<!-- one-click-workflow:start -->
+## Workflow defaults (v3.4.24)
+
+Kairo opens its capture form directly; there is no first-run setup screen. Destination validation is available on demand in Settings.
+<!-- one-click-workflow:end -->

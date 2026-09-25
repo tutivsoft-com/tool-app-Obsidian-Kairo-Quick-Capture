@@ -1,8 +1,27 @@
 # Changelog
 
-## 3.4.22 - 2026-09-25
+## 3.4.27 (2026-09-25)
+
+- Synchronized version metadata and the packaged runtime across the source and public release repositories.
+
+
+## 3.4.26 (2026-09-25)
 
 - Synchronized the release version across release metadata and current product documentation; plugin behavior is unchanged.
+
+## 3.4.24 (2026-09-24)
+
+- Kairo opens its capture form directly; there is no first-run setup screen. Destination validation is available on demand in Settings.
+
+
+## 3.4.23
+
+- Removed automatic first-run setup and test-capture windows; destination setup stays in settings.
+
+
+## 3.4.22 - 2026-09-24
+
+- Added editor-context capture for selected text and note links, plus File Explorer multi-selection link capture.
 
 ## 3.4.19 - 2026-09-24
 

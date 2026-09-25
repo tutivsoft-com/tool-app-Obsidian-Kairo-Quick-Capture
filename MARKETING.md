@@ -31,3 +31,9 @@ Kairo runs inside an active Obsidian desktop session and cannot capture while Ob
 ## Listing
 
 Official Obsidian Community listing: https://community.obsidian.md/plugins/kairo-quick-capture
+
+<!-- one-click-workflow:start -->
+## Workflow defaults (v3.4.24)
+
+Kairo opens its capture form directly; there is no first-run setup screen. Destination validation is available on demand in Settings.
+<!-- one-click-workflow:end -->

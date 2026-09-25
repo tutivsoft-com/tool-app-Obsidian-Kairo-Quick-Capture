@@ -9,3 +9,9 @@ Writes use a read/mtime-check/modify sequence. If the destination changes during
 Each capture requires an online allowance or credit verification. If billing cannot be verified, Kairo does not deliver that capture. A vault-write failure after successful verification may be retried locally without a second claim.
 
 The optional Electron integrations are limited to a local global shortcut and launch-at-login setting. Kairo does not inspect the active window, clipboard, or source application outside Obsidian.
+
+<!-- one-click-workflow:start -->
+## Workflow defaults (v3.4.24)
+
+Kairo opens its capture form directly; there is no first-run setup screen. Destination validation is available on demand in Settings.
+<!-- one-click-workflow:end -->

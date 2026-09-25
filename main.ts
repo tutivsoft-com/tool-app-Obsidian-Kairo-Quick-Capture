@@ -1,10 +1,13 @@
 import {
   App,
+  Editor,
+  Menu,
   Modal,
   Notice,
   Plugin,
   PluginSettingTab,
   Setting,
+  TAbstractFile,
   TFile,
   TFolder,
   normalizePath,
@@ -45,7 +48,6 @@ const DEFAULT_SETTINGS: KairoSettings = {
   createMissing: false,
   closeAfterSaving: true,
   launchAtLogin: false,
-  setupCompleted: false,
   constanceDeviceId: "",
   billingEmail: "",
   billingAccessToken: "",
@@ -68,7 +70,6 @@ export interface KairoSettings {
   createMissing: boolean;
   closeAfterSaving: boolean;
   launchAtLogin: boolean;
-  setupCompleted: boolean;
   constanceDeviceId: string;
   billingEmail: string;
   billingAccessToken: string;
@@ -131,6 +132,9 @@ export default class KairoQuickCapturePlugin extends Plugin {
       hotkeys: [{ modifiers: ["Mod", "Shift"], key: "K" }],
       callback: () => this.openCapture(),
     });
+    this.registerEvent(this.app.workspace.on("editor-menu", (menu, editor, info) => this.addEditorMenuItems(menu, editor, info.file)));
+    this.registerEvent(this.app.workspace.on("file-menu", (menu, file) => this.addFileMenuItems(menu, file)));
+    this.registerEvent(this.app.workspace.on("files-menu", (menu, files) => this.addFilesMenuItems(menu, files)));
     this.addCommand({
       id: "flush-queue",
       name: "Flush queued captures",
@@ -141,11 +145,6 @@ export default class KairoQuickCapturePlugin extends Plugin {
       name: "Show queued captures",
       callback: () => new QueueModal(this.app, this).open(),
     });
-    this.addCommand({
-      id: "run-setup",
-      name: "Run setup",
-      callback: () => new SetupModal(this.app, this).open(),
-    });
     this.addSettingTab(new KairoSettingTab(this.app, this));
 
     this.registerInterval(window.setInterval(() => void this.flushQueue(false), 60_000));
@@ -153,7 +152,6 @@ export default class KairoQuickCapturePlugin extends Plugin {
       this.registerGlobalShortcut();
       void this.flushQueue(false);
       void syncPurchasedUses(this).then(() => retryPendingSpendEvents(this));
-      if (!this.settings.setupCompleted) window.setTimeout(() => new SetupModal(this.app, this).open(), 500);
     });
   }
 
@@ -172,8 +170,32 @@ export default class KairoQuickCapturePlugin extends Plugin {
     await write;
   }
 
-  openCapture(): void {
-    new CaptureModal(this.app, this).open();
+  openCapture(initialText = ""): void {
+    new CaptureModal(this.app, this, initialText).open();
+  }
+
+  private addEditorMenuItems(menu: Menu, editor: Editor, file: TFile | null): void {
+    const selection = editor.getSelection().trim();
+    if (selection) menu.addItem((item) => item.setTitle("Kairo: Quick capture selected text").setIcon("capture").onClick(() => this.openCapture(selection)));
+    if (file instanceof TFile && file.extension.toLowerCase() === "md") this.addNoteLinkMenuItem(menu, file);
+  }
+
+  private addFileMenuItems(menu: Menu, file: TAbstractFile): void {
+    if (file instanceof TFile && file.extension.toLowerCase() === "md") this.addNoteLinkMenuItem(menu, file);
+  }
+
+  private addFilesMenuItems(menu: Menu, selected: TAbstractFile[]): void {
+    const paths = new Set<string>();
+    for (const entry of selected) {
+      if (entry instanceof TFile && entry.extension.toLowerCase() === "md") paths.add(entry.path);
+      else if (entry instanceof TFolder) for (const file of this.app.vault.getMarkdownFiles()) if (file.path.startsWith(`${entry.path}/`)) paths.add(file.path);
+    }
+    const links = [...paths].map((path) => this.app.vault.getAbstractFileByPath(path)).filter((file): file is TFile => file instanceof TFile).map((file) => `[[${file.basename}]]`);
+    if (links.length > 1) menu.addItem((item) => item.setTitle(`Kairo: Capture links to ${links.length} selected notes`).setIcon("links-coming-in").onClick(() => this.openCapture(links.join("\n"))));
+  }
+
+  private addNoteLinkMenuItem(menu: Menu, file: TFile): void {
+    menu.addItem((item) => item.setTitle("Kairo: Quick capture link to this note").setIcon("link").onClick(() => this.openCapture(`[[${file.basename}]]`)));
   }
 
   destinationFor(date = new Date()): string {
@@ -368,7 +390,7 @@ class CaptureModal extends Modal {
   private status!: HTMLElement;
   private diagnostic?: string;
 
-  constructor(app: App, private readonly plugin: KairoQuickCapturePlugin) { super(app); }
+  constructor(app: App, private readonly plugin: KairoQuickCapturePlugin, private readonly initialText = "") { super(app); }
 
   onOpen(): void {
     this.modalEl.addClass("kairo-capture-modal");
@@ -376,6 +398,7 @@ class CaptureModal extends Modal {
     this.contentEl.empty();
     this.contentEl.createEl("p", { text: "Capture locally; Kairo will deliver it to your configured destination." });
     this.textarea = this.contentEl.createEl("textarea", { attr: { ariaLabel: "Capture text", rows: "7", placeholder: "What do you want to remember?" } });
+    this.textarea.value = this.initialText;
     this.status = this.contentEl.createDiv({ cls: "kairo-status", attr: { role: "status", "aria-live": "polite" } });
     this.status.setText("Ready");
     const actions = this.contentEl.createDiv({ cls: "kairo-actions" });
@@ -451,46 +474,6 @@ class QueueModal extends Modal {
   onClose(): void { this.contentEl.empty(); }
 }
 
-class SetupModal extends Modal {
-  constructor(app: App, private readonly plugin: KairoQuickCapturePlugin) { super(app); }
-
-  onOpen(): void {
-    this.titleEl.setText("Set up Kairo");
-    this.contentEl.empty();
-    this.contentEl.createEl("p", { text: "Kairo writes only to the current vault. Configure a destination in settings, validate it, then explicitly confirm a test capture." });
-    const result = this.contentEl.createDiv({ cls: "kairo-status", attr: { role: "status", "aria-live": "polite" } });
-    const validate = this.contentEl.createEl("button", { text: "Validate destination" });
-    const test = this.contentEl.createEl("button", { text: "Confirm and write test capture", cls: "mod-cta" });
-    const later = this.contentEl.createEl("button", { text: "Skip for now" });
-    validate.addEventListener("click", () => void this.validate(result));
-    test.addEventListener("click", () => void this.writeTest(result));
-    later.addEventListener("click", () => this.close());
-  }
-
-  private async validate(result: HTMLElement): Promise<void> {
-    const check = await this.plugin.validateDestination();
-    result.setText(check.ok ? `Ready: ${check.path}` : check.reason ?? "Destination is not ready.");
-  }
-
-  private async writeTest(result: HTMLElement): Promise<void> {
-    const check = await this.plugin.validateDestination();
-    if (!check.ok) { result.setText(check.reason ?? "Configure a destination first."); return; }
-    try {
-      const capture = await this.plugin.capture("Kairo setup test — safe to delete.");
-      if (capture.state !== "saved") {
-        result.setText(capture.state === "queued" ? "The test capture was queued; setup will finish after the destination becomes available." : "The test capture could not be persisted. Setup is not marked complete.");
-        return;
-      }
-      this.plugin.settings.setupCompleted = true;
-      await this.plugin.persist();
-      result.setText("Setup complete. You can delete the test capture if you like.");
-      new Notice("Kairo setup complete.");
-    } catch (error) { result.setText(error instanceof Error ? error.message : "Setup test failed."); }
-  }
-
-  onClose(): void { this.contentEl.empty(); }
-}
-
 class KairoSettingTab extends PluginSettingTab {
   private usageSummaryEl?: HTMLElement;
 
@@ -525,11 +508,11 @@ class KairoSettingTab extends PluginSettingTab {
     new Setting(containerEl).setName("Daily-note format").setDesc("Filename format: YYYY, MM, DD, HH, mm, ss.").addText((text) => text.setValue(this.plugin.settings.dailyFormat).onChange(async (value) => { this.plugin.settings.dailyFormat = value || DEFAULT_SETTINGS.dailyFormat; await this.plugin.persist(); }));
     new Setting(containerEl).setName("Timestamp format").setDesc("Template time format: YYYY, MM, DD, HH, mm, ss.").addText((text) => text.setValue(this.plugin.settings.timestampFormat).onChange(async (value) => { this.plugin.settings.timestampFormat = value || DEFAULT_SETTINGS.timestampFormat; await this.plugin.persist(); }));
     new Setting(containerEl).setName("Capture template").setDesc("Use {{time}}, {{source}}, {{text}}, and {{id}}. The id marker prevents duplicate retries.").addTextArea((text) => text.setValue(this.plugin.settings.template).onChange(async (value) => { this.plugin.settings.template = value || DEFAULT_TEMPLATE; await this.plugin.persist(); }));
-    new Setting(containerEl).setName("Create missing destinations").setDesc("Off by default. When enabled, Kairo may create the configured Markdown file after an explicit setup/test action or capture.").addToggle((toggle) => toggle.setValue(this.plugin.settings.createMissing).onChange(async (value) => { this.plugin.settings.createMissing = value; await this.plugin.persist(); }));
+    new Setting(containerEl).setName("Create missing destinations").setDesc("When enabled, Kairo creates the configured Markdown file on the first capture.").addToggle((toggle) => toggle.setValue(this.plugin.settings.createMissing).onChange(async (value) => { this.plugin.settings.createMissing = value; await this.plugin.persist(); }));
     new Setting(containerEl).setName("Close after saving").setDesc("Close the scratchpad after a successful save.").addToggle((toggle) => toggle.setValue(this.plugin.settings.closeAfterSaving).onChange(async (value) => { this.plugin.settings.closeAfterSaving = value; await this.plugin.persist(); }));
     new Setting(containerEl).setName("Launch at login").setDesc("Optional desktop convenience. Disabled by default and handled locally by Electron when supported.").addToggle((toggle) => toggle.setValue(this.plugin.settings.launchAtLogin).onChange(async (value) => { this.plugin.settings.launchAtLogin = value; this.plugin.applyLaunchAtLogin(); await this.plugin.persist(); }));
     new Setting(containerEl).setName("Queue").setDesc(`${this.plugin.queue.length} capture${this.plugin.queue.length === 1 ? "" : "s"} waiting for delivery.`).addButton((button) => button.setButtonText("Show queue").onClick(() => new QueueModal(this.app, this.plugin).open())).addButton((button) => button.setButtonText("Flush now").onClick(() => void this.plugin.flushQueue(true)));
-    new Setting(containerEl).setName("First-run setup").setDesc(this.plugin.settings.setupCompleted ? "Setup has been completed." : "Validate the destination and write a confirmed test capture.").addButton((button) => button.setButtonText("Open setup").onClick(() => new SetupModal(this.app, this.plugin).open()));
+    new Setting(containerEl).setName("Validate destination").setDesc("Check the configured destination without writing a test note.").addButton((button) => button.setButtonText("Validate").onClick(async () => { const result = await this.plugin.validateDestination(); new Notice(result.ok ? `Kairo: destination ready at ${result.path}.` : `Kairo: ${result.reason ?? "destination is not ready"}`); }));
     void syncPurchasedUses(this.plugin).then(() => this.renderUsageSummary());
   }
 

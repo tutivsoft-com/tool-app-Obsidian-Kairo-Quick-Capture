@@ -1,12 +1,14 @@
 # Kairo Quick Capture
 
-Version: `3.4.19`
+Version: `3.4.27`
 
 Kairo is a local-first Obsidian scratchpad for capturing fleeting thoughts quickly and delivering them to an inbox file or dated daily note. It supports plain text, pasted text, URLs, and multiline notes without an AI service. Each accepted capture needs an online billing allowance or credit verification.
 
 ## What it does
 
 - Opens a small, keyboard-friendly capture modal with Save, Save and close, and Cancel actions.
+- Lets you right-click selected note text to prefill a capture, or right-click a Markdown note to capture its Obsidian link.
+- Lets you capture links for multiple selected Markdown notes or folders from the File Explorer context menu.
 - Registers an optional desktop accelerator while Obsidian is running, plus an Obsidian command hotkey fallback.
 - Appends to an inbox file or creates/appends to a daily note using a configurable template.
 - Stores failed captures in an ordered local queue and retries automatically every minute and when Obsidian is ready.
@@ -24,7 +26,7 @@ The plugin is desktop-only because the optional global accelerator and launch-at
 
 ## First run
 
-Open **Kairo Quick Capture: Run setup**, choose the destination in plugin settings, validate it, and use **Confirm and write test capture**. Missing files are never created unless **Create missing destinations** is enabled. Kairo writes only inside the currently open vault; it cannot select or modify a different vault from an Obsidian plugin.
+Choose and validate the destination in plugin settings. Kairo does not open a first-run setup window or write a test capture. Missing files are created only when **Create missing destinations** is enabled. Kairo writes only inside the currently open vault; it cannot select or modify a different vault from an Obsidian plugin.
 
 Default destination is `Inbox.md` at the vault root. Daily notes default to `Daily/YYYY-MM-DD.md`. Templates support `{{time}}`, `{{source}}`, `{{text}}`, and `{{id}}`.
 
@@ -91,3 +93,9 @@ The plugin does not promise capture while Obsidian is fully closed: an Obsidian 
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
+<!-- one-click-workflow:start -->
+## Workflow defaults (v3.4.24)
+
+Kairo opens its capture form directly; there is no first-run setup screen. Destination validation is available on demand in Settings.
+<!-- one-click-workflow:end -->

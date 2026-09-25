@@ -1,6 +1,6 @@
 # Kairo Quick Capture Features
 
-Version: 3.4.19
+Version: 3.4.27
 
 ## Capture
 
@@ -40,3 +40,9 @@ Version: 3.4.19
 - Built for desktop Obsidian. The standard Obsidian command remains available when the optional global shortcut is unavailable.
 - Launch-at-login and global shortcut support depend on the host Electron APIs and operating-system permissions.
 - It cannot select or write to a vault other than the one currently open in Obsidian.
+
+<!-- one-click-workflow:start -->
+## Workflow defaults (v3.4.24)
+
+Kairo opens its capture form directly; there is no first-run setup screen. Destination validation is available on demand in Settings.
+<!-- one-click-workflow:end -->
