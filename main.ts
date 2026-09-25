@@ -138,7 +138,7 @@ export default class KairoQuickCapturePlugin extends Plugin {
     this.addCommand({
       id: "flush-queue",
       name: "Flush queued captures",
-      callback: () => void this.flushQueue(true),
+      callback: () => this.flushQueue(true),
     });
     this.addCommand({
       id: "show-queue",
@@ -482,6 +482,7 @@ class KairoSettingTab extends PluginSettingTab {
   display(): void {
     const { containerEl } = this;
     containerEl.empty();
+    this.plugin.support.addDiagnosticsSetting(containerEl);
     containerEl.createEl("p", { text: "Local-first capture. The optional Electron shortcut is active while Obsidian is running; the Obsidian command hotkey is always available as a fallback." });
 
     new Setting(containerEl).setName("Billing & usage").setHeading();

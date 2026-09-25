@@ -1,6 +1,6 @@
 # Kairo Quick Capture
 
-Version: `3.4.27`
+Version: `3.4.30`
 
 Kairo is a local-first Obsidian scratchpad for capturing fleeting thoughts quickly and delivering them to an inbox file or dated daily note. It supports plain text, pasted text, URLs, and multiline notes without an AI service. Each accepted capture needs an online billing allowance or credit verification.
 
@@ -13,17 +13,12 @@ Kairo is a local-first Obsidian scratchpad for capturing fleeting thoughts quick
 - Appends to an inbox file or creates/appends to a daily note using a configurable template.
 - Stores failed captures in an ordered local queue and retries automatically every minute and when Obsidian is ready.
 - Uses an id marker and a destination-change check to avoid duplicate delivery and accidental overwrites.
-- Provides a first-run setup flow, queue viewer, copyable non-content diagnostics, and optional launch-at-login.
+- Provides an on-demand setup command, queue viewer, copyable non-content diagnostics, and optional launch-at-login.
 - Includes optional one-time billing: 3 free captures per UTC calendar day, then 1 credit per accepted capture.
 
-## Install for development
+## Installation
 
-1. Run `npm install` and `npm run build`.
-2. Copy `publish/main.js`, `publish/manifest.json`, and `publish/styles.css` into `<vault>/.obsidian/plugins/kairo-quick-capture/`.
-3. Enable **Kairo Quick Capture** in Obsidian's Community plugins settings.
-
-The plugin is desktop-only because the optional global accelerator and launch-at-login integrations use Electron when available. The normal Obsidian command remains available if an operating system rejects the accelerator.
-
+Install **Kairo Quick Capture** from Obsidian Settings → Community plugins → Browse. For manual installation, create .obsidian/plugins/kairo-quick-capture/ inside your vault and place the main.js, manifest.json, and styles.css files from the [latest public release](https://github.com/tutivsoft-com/tool-app-Obsidian-Kairo-Quick-Capture/releases/latest) in that folder. Enable Kairo under Community plugins.
 ## First run
 
 Choose and validate the destination in plugin settings. Kairo does not open a first-run setup window or write a test capture. Missing files are created only when **Create missing destinations** is enabled. Kairo writes only inside the currently open vault; it cannot select or modify a different vault from an Obsidian plugin.
@@ -82,13 +77,6 @@ The plugin does not promise capture while Obsidian is fully closed: an Obsidian 
 - **Kairo Quick Capture: Flush queued captures**
 - **Kairo Quick Capture: Show queued captures**
 - **Kairo Quick Capture: Run setup**
-
-## Product documentation
-
-- [Features](FEATURES.md)
-- [Requirements](REQUIREMENTS.md)
-- [Software Architecture](SOFTWARE_ARCHITECTURE.md)
-- [Marketing](MARKETING.md)
 
 ## License
 
