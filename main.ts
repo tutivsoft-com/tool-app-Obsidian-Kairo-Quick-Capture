@@ -51,6 +51,8 @@ const DEFAULT_SETTINGS: KairoSettings = {
   constanceDeviceId: "",
   billingEmail: "",
   billingAccessToken: "",
+  billingRefreshToken: "",
+  billingAccessTokenExpiresAt: 0,
   billingAccountLinked: false,
   freeUsesRemaining: 3,
   freeUsesDay: currentDayKey(),
@@ -73,6 +75,8 @@ export interface KairoSettings {
   constanceDeviceId: string;
   billingEmail: string;
   billingAccessToken: string;
+  billingRefreshToken: string;
+  billingAccessTokenExpiresAt: number;
   billingAccountLinked: boolean;
   freeUsesRemaining: number;
   freeUsesDay: string;

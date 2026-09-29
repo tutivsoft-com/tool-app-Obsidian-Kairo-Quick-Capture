@@ -1,6 +1,5 @@
-import { Notice, requestUrl } from "obsidian";
-import { spendAccountCredits } from "./constance-account";
-import { claimAccountFreeUsage } from "./constance-account";
+import { Notice } from "obsidian";
+import { authenticatedBillingRequest, clearBillingSession, spendAccountCredits, claimAccountFreeUsage } from "./constance-account";
 
 const CONSTANCE_BASE_URL = "https://app.tutivsoft.com";
 export const CONSTANCE_APP_ID = "kairo-quick-capture";
@@ -12,8 +11,7 @@ export const CONSTANCE_PRICE_IDS = {
   usd_010: "pri_01m28hkppkk8m3dy56gmmbnrst", // $10 -> 1,000 uses
 } as const;
 
-// Catalog-owned plan codes used by the authenticated checkout endpoint. Price
-// IDs remain only for the legacy /buy fallback.
+// Catalog-owned plan codes used by the authenticated checkout endpoint.
 export const CONSTANCE_PLAN_CODES = {
   usd_001: "one_time",
   usd_010: "standard",
@@ -23,6 +21,8 @@ export interface BillingSettings {
   constanceDeviceId: string;
   billingEmail: string;
   billingAccessToken: string;
+  billingRefreshToken: string;
+  billingAccessTokenExpiresAt: number;
   billingAccountLinked: boolean;
   freeUsesRemaining: number;
   freeUsesDay: string;
@@ -45,7 +45,7 @@ type BillingPlugin = {
 
 type AuthenticatedCheckoutResult =
   | { kind: "ok"; checkoutUrl: string; checkoutId?: string }
-  | { kind: "fallback" }
+  | { kind: "error" }
   | { kind: "auth-required" };
 
 const billingLocks = new WeakMap<object, Promise<unknown>>();
@@ -80,6 +80,8 @@ export function normalizeBillingSettings(settings: BillingSettings, date = new D
   settings.constanceDeviceId = typeof settings.constanceDeviceId === "string" ? settings.constanceDeviceId : "";
   settings.billingEmail = typeof settings.billingEmail === "string" ? settings.billingEmail : "";
   settings.billingAccessToken = typeof settings.billingAccessToken === "string" ? settings.billingAccessToken : "";
+  settings.billingRefreshToken = typeof settings.billingRefreshToken === "string" ? settings.billingRefreshToken : "";
+  settings.billingAccessTokenExpiresAt = Number.isFinite(settings.billingAccessTokenExpiresAt) ? settings.billingAccessTokenExpiresAt : 0;
   settings.billingAccountLinked = settings.billingAccountLinked === true && Boolean(settings.billingAccessToken);
   settings.freeUsesRemaining = Number.isFinite(settings.freeUsesRemaining)
     ? Math.max(0, Math.min(FREE_USES_PER_DAY, Math.trunc(settings.freeUsesRemaining)))
@@ -121,10 +123,9 @@ interface EntitlementSnapshot {
 }
 
 async function fetchEntitlements(plugin: BillingPlugin): Promise<EntitlementSnapshot> {
-  const response = await requestUrl({
+  const response = await authenticatedBillingRequest(plugin.settings, () => plugin.persist(), {
     url: `${CONSTANCE_BASE_URL}/api/v1/billing/entitlements/me?${new URLSearchParams({ app_id: CONSTANCE_APP_ID, installation_id: plugin.settings.constanceDeviceId }).toString()}`,
     method: "GET",
-    headers: { Authorization: `Bearer ${plugin.settings.billingAccessToken}` },
     throw: false,
   });
   if (response.status < 200 || response.status >= 300) throw new Error(`Entitlement sync failed: HTTP ${response.status}`);
@@ -168,8 +169,8 @@ export async function retryPendingSpendEvents(plugin: BillingPlugin): Promise<vo
 }
 
 export async function spendConstanceUse(plugin: BillingPlugin, eventId = generateEventId()): Promise<SpendResult> {
-  const result = await spendAccountCredits(plugin.settings, CONSTANCE_APP_ID, plugin.settings.constanceDeviceId, eventId, 1);
-  if (result.kind === "auth-required") { plugin.settings.billingAccessToken = ""; plugin.settings.billingAccountLinked = false; await plugin.persist(); return { kind: "error" }; }
+  const result = await spendAccountCredits({ state: plugin.settings, persist: () => plugin.persist(), appId: CONSTANCE_APP_ID, installationId: plugin.settings.constanceDeviceId, syncBalance: async () => {} }, CONSTANCE_APP_ID, plugin.settings.constanceDeviceId, eventId, 1);
+  if (result.kind === "auth-required") { await clearBillingSession(plugin.settings, () => plugin.persist()); return { kind: "error" }; }
   return result.kind === "ok" || result.kind === "insufficient" || result.kind === "error" ? result : { kind: "error" };
 }
 
@@ -179,7 +180,7 @@ export async function consumeCaptureUse(plugin: BillingPlugin, eventId = generat
       new Notice("Kairo: sign in or create a billing account in plugin settings before capturing.");
       return false;
     }
-    const free = await claimAccountFreeUsage(plugin.settings, CONSTANCE_APP_ID, plugin.settings.constanceDeviceId, eventId, 1);
+    const free = await claimAccountFreeUsage({ state: plugin.settings, persist: () => plugin.persist(), appId: CONSTANCE_APP_ID, installationId: plugin.settings.constanceDeviceId, syncBalance: async () => {} }, CONSTANCE_APP_ID, plugin.settings.constanceDeviceId, eventId, 1);
     if (free.kind === "ok") {
       plugin.settings.freeUsesDay = currentDayKey();
       plugin.settings.freeUsesRemaining = free.remaining;
@@ -187,9 +188,7 @@ export async function consumeCaptureUse(plugin: BillingPlugin, eventId = generat
       return true;
     }
     if (free.kind === "auth-required") {
-      plugin.settings.billingAccessToken = "";
-      plugin.settings.billingAccountLinked = false;
-      await plugin.persist();
+      await clearBillingSession(plugin.settings, () => plugin.persist());
       new Notice("Kairo: your billing session expired. Sign in again in plugin settings.");
       return false;
     }
@@ -228,10 +227,10 @@ export async function consumeCaptureUse(plugin: BillingPlugin, eventId = generat
 
 async function createAuthenticatedCheckout(plugin: BillingPlugin, tier: keyof typeof CONSTANCE_PRICE_IDS): Promise<AuthenticatedCheckoutResult> {
   const idempotencyKey = `checkout_${generateEventId()}`;
-  const response = await requestUrl({
+  const response = await authenticatedBillingRequest(plugin.settings, () => plugin.persist(), {
     url: `${CONSTANCE_BASE_URL}/api/v1/billing/checkout`,
     method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${plugin.settings.billingAccessToken}`, "Idempotency-Key": idempotencyKey },
+    headers: { "Content-Type": "application/json", "Idempotency-Key": idempotencyKey },
     body: JSON.stringify({
       app_id: CONSTANCE_APP_ID,
       plan_code: CONSTANCE_PLAN_CODES[tier],
@@ -242,18 +241,17 @@ async function createAuthenticatedCheckout(plugin: BillingPlugin, tier: keyof ty
     throw: false,
   });
   if (response.status === 401 || response.status === 403) return { kind: "auth-required" };
-  if (response.status < 200 || response.status >= 300) return { kind: "fallback" };
+  if (response.status < 200 || response.status >= 300) return { kind: "error" };
   const data = response.json?.data;
   const checkoutUrl = typeof data?.checkout_url === "string" ? data.checkout_url : "";
-  return checkoutUrl ? { kind: "ok", checkoutUrl, checkoutId: data?.checkout_id ? String(data.checkout_id) : undefined } : { kind: "fallback" };
+  return checkoutUrl ? { kind: "ok", checkoutUrl, checkoutId: data?.checkout_id ? String(data.checkout_id) : undefined } : { kind: "error" };
 }
 
 export async function pollAuthenticatedCheckout(plugin: BillingPlugin, checkoutId: string): Promise<boolean> {
   if (!plugin.settings.billingAccessToken || !plugin.settings.billingAccountLinked) return false;
-  const response = await requestUrl({
+  const response = await authenticatedBillingRequest(plugin.settings, () => plugin.persist(), {
     url: `${CONSTANCE_BASE_URL}/api/v1/billing/checkouts/${encodeURIComponent(checkoutId)}`,
     method: "GET",
-    headers: { Authorization: `Bearer ${plugin.settings.billingAccessToken}` },
     throw: false,
   });
   return response.status >= 200 && response.status < 300 && response.json?.data?.settled === true;
@@ -264,7 +262,6 @@ export function openBuyCheckout(plugin: BillingPlugin, tier: keyof typeof CONSTA
     new Notice("Sign in or create a billing account in Kairo settings before buying uses.");
     return;
   }
-  const priceId = CONSTANCE_PRICE_IDS[tier];
   void (async () => {
     try {
       const checkout = await createAuthenticatedCheckout(plugin, tier);
@@ -274,31 +271,17 @@ export function openBuyCheckout(plugin: BillingPlugin, tier: keyof typeof CONSTA
         return;
       }
       if (checkout.kind === "auth-required") {
-        plugin.settings.billingAccessToken = "";
-        plugin.settings.billingAccountLinked = false;
-        await plugin.persist();
+        await clearBillingSession(plugin.settings, () => plugin.persist());
         new Notice("Kairo: your billing session expired. Sign in again before buying uses.");
         return;
       }
     } catch (error) {
-      // A transport failure can leave a checkout in an unknown state. Do not
-      // create a second purchase through the fallback in that case.
+      // A transport failure can leave a checkout in an unknown state.
       console.error("Kairo: authenticated checkout request failed", error);
       new Notice("Kairo: checkout status is unknown. Refresh billing and try again.");
       return;
     }
 
-    const email = plugin.settings.billingEmail.trim();
-    if (!priceId.startsWith("pri_")) {
-      new Notice("Kairo billing is not available for this pack yet.");
-      return;
-    }
-    if (!email || !email.includes("@")) {
-      new Notice("Enter a valid billing email in Kairo settings before using the legacy checkout fallback.");
-      return;
-    }
-    const params = new URLSearchParams({ app_id: CONSTANCE_APP_ID, price_id: priceId, email, external_customer_id: plugin.settings.constanceDeviceId });
-    window.open(`${CONSTANCE_BASE_URL}/buy?${params.toString()}`, "_blank");
-    plugin.pollAfterCheckout?.();
+    new Notice("Kairo: checkout could not be started. Refresh billing and try again.");
   })();
 }

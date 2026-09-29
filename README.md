@@ -1,6 +1,6 @@
 # Kairo Quick Capture
 
-Version: `3.4.35`
+Version: `3.4.37`
 
 Kairo is a local-first Obsidian scratchpad for capturing fleeting thoughts quickly and delivering them to an inbox file or dated daily note. It supports plain text, pasted text, URLs, and multiline notes without an AI service. Each accepted capture needs an online billing allowance or credit verification.
 
@@ -15,6 +15,14 @@ Kairo is a local-first Obsidian scratchpad for capturing fleeting thoughts quick
 - Uses an id marker and a destination-change check to avoid duplicate delivery and accidental overwrites.
 - Provides an on-demand setup command, queue viewer, copyable non-content diagnostics, and optional launch-at-login.
 - Includes optional one-time billing: 3 free captures per UTC calendar day, then 1 credit per accepted capture.
+
+## Install for development
+
+1. Run `npm install` and `npm run build`.
+2. Copy `publish/main.js`, `publish/manifest.json`, and `publish/styles.css` into `<vault>/.obsidian/plugins/kairo-quick-capture/`.
+3. Enable **Kairo Quick Capture** in Obsidian's Community plugins settings.
+
+The plugin is desktop-only because the optional global accelerator and launch-at-login integrations use Electron when available. The normal Obsidian command remains available if an operating system rejects the accelerator.
 
 ## First run
 
@@ -31,10 +39,7 @@ installation id to the verified billing account, polls
 spend amount, and idempotency event id to the free-usage or paid-credit
 endpoints. It never sends captured text to Constance.
 
-Account registration may require email verification; enter the emailed token
-in Kairo settings before using checkout. Checkout first requests an authenticated
-catalog-code transaction and polls for settlement. The app-specific
-`/buy?app_id=...&price_id=...` redirect is a fallback.
+Account registration may require email verification; click the emailed confirmation link, then sign in. Kairo rotates the refresh token so access-token expiry does not interrupt the session. Checkout uses an authenticated catalog-code transaction and polls for settlement.
 Because Kairo is backend-less, it does not hold a shared HMAC secret or receive
 server entitlement callbacks; the bearer-linked installation is the supported
 client flow.
@@ -74,6 +79,13 @@ The plugin does not promise capture while Obsidian is fully closed: an Obsidian 
 - **Kairo Quick Capture: Flush queued captures**
 - **Kairo Quick Capture: Show queued captures**
 - **Kairo Quick Capture: Run setup**
+
+## Product documentation
+
+- [Features](FEATURES.md)
+- [Requirements](REQUIREMENTS.md)
+- [Software Architecture](SOFTWARE_ARCHITECTURE.md)
+- [Marketing](MARKETING.md)
 
 ## License
 
