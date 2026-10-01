@@ -32,11 +32,13 @@ import {
   syncPurchasedUses,
 } from "./src/billing";
 import { PluginSupport } from "./src/plugin-support";
+import { reserveNative, renderNativePacks, jobId, codePoints, recoverNative } from "./src/native-operations";
 import { addBillingAccountSettings } from "./src/constance-account";
 
 const VERSION = "3.4.17";
 const DEFAULT_TEMPLATE = "- {{time}} — {{text}}\n";
 const DEFAULT_SETTINGS: KairoSettings = {
+  settingsMode: "simple",
   shortcut: "Ctrl+Shift+Space",
   vaultFolder: "",
   destinationMode: "inbox",
@@ -61,6 +63,7 @@ const DEFAULT_SETTINGS: KairoSettings = {
 };
 
 export interface KairoSettings {
+  settingsMode: "simple" | "advanced";
   shortcut: string;
   vaultFolder: string;
   destinationMode: "inbox" | "daily";
@@ -78,9 +81,11 @@ export interface KairoSettings {
   billingRefreshToken: string;
   billingAccessTokenExpiresAt: number;
   billingAccountLinked: boolean;
+  automaticDeliveryApproved?: boolean;
   freeUsesRemaining: number;
   freeUsesDay: string;
   purchasedUses: number;
+  completedCaptureCharges?: string[];
   pendingSpendEvents: Array<{ eventId: string; amount: number }>;
 }
 
@@ -91,6 +96,10 @@ interface QueuedCapture {
   entry: string;
   attempts: number;
   lastError?: string;
+  billingPending?: boolean;
+  nativeReservation?: boolean;
+  inputCharacters?: number;
+  nativeSource?: string;
 }
 
 interface KairoData {
@@ -115,6 +124,7 @@ export default class KairoQuickCapturePlugin extends Plugin {
   settings: KairoSettings = { ...DEFAULT_SETTINGS };
   queue: QueuedCapture[] = [];
   private globalShortcut?: string;
+  private capturePreview?: { text: string; id: string; destination: string; entry: string; createdAt: number };
   private checkoutPollTimer?: number;
   private persistChain: Promise<void> = Promise.resolve();
   private deliveryChain: Promise<void> = Promise.resolve();
@@ -151,10 +161,11 @@ export default class KairoQuickCapturePlugin extends Plugin {
     });
     this.addSettingTab(new KairoSettingTab(this.app, this));
 
-    this.registerInterval(window.setInterval(() => void this.flushQueue(false), 60_000));
+    this.registerInterval(window.setInterval(() => void (this.settings.automaticDeliveryApproved && this.flushQueue(false)), 60_000));
     this.app.workspace.onLayoutReady(() => {
       this.registerGlobalShortcut();
-      void this.flushQueue(false);
+      if (this.settings.automaticDeliveryApproved) void this.flushQueue(false);
+      void recoverNative({app:this.app,settings:this.settings,persistNative:()=>this.persist()});
       void syncPurchasedUses(this).then(() => retryPendingSpendEvents(this));
     });
   }
@@ -174,6 +185,7 @@ export default class KairoQuickCapturePlugin extends Plugin {
     await write;
   }
 
+  clearGuestCapturePreview():void {if(!this.settings.billingAccountLinked)this.capturePreview=undefined;}
   openCapture(initialText = ""): void {
     new CaptureModal(this.app, this, initialText).open();
   }
@@ -209,36 +221,31 @@ export default class KairoQuickCapturePlugin extends Plugin {
     return joinVaultPath(this.settings.vaultFolder, relative);
   }
 
-  async capture(text: string): Promise<{ state: "saved" | "queued" | "failed"; id: string; diagnostic?: string }> {
+  async capture(text: string): Promise<{ state: "saved" | "queued" | "failed" | "preview"; id: string; diagnostic?: string }> {
     const trimmed = text.trimEnd();
     if (!trimmed.trim()) throw new Error("Capture is empty.");
-    const id = this.makeId();
-    if (!(await consumeCaptureUse(this, `evt_${id}`))) throw new Error("No capture uses remain. Buy a use pack in Kairo settings.");
-    const now = new Date();
-    const destination = this.destinationFor(now);
-    const entry = renderTemplate(this.settings.template, {
+    if(!this.settings.billingAccountLinked && codePoints(trimmed)>2000)throw new Error("Guest capture preview supports up to 2,000 characters. Select a smaller capture; input was not truncated or saved.");
+    const preserved = this.capturePreview?.text === trimmed ? this.capturePreview : undefined;
+    const id = preserved?.id || this.makeId();
+    const now = new Date(preserved?.createdAt || Date.now());
+    const destination = preserved?.destination || this.destinationFor(now);
+    const entry = preserved?.entry || renderTemplate(this.settings.template, {
       time: formatTimestamp(now, this.settings.timestampFormat),
       source: "Obsidian",
       text: trimmed,
       id,
     });
-    try {
-      await this.appendSafely(destination, entry, id);
-      return { state: "saved", id };
-    } catch (error) {
-      const queued: QueuedCapture = { id, createdAt: now.getTime(), destination, entry, attempts: 1, lastError: diagnosticSummary(destination, error, id) };
-      this.queue.push(queued);
-      try {
-        await this.persist();
-        return { state: "queued", id, diagnostic: queued.lastError };
-      } catch (persistError) {
-        // A failed persistence attempt must not leave an item eligible for a
-        // later in-memory flush after the user has been told to retry.
-        this.queue = this.queue.filter((item) => item.id !== id);
-        queued.lastError = diagnosticSummary(destination, persistError, id);
-        return { state: "failed", id, diagnostic: queued.lastError };
-      }
-    }
+    this.capturePreview = { text: trimmed, id, createdAt: now.getTime(), destination, entry };
+    if (!this.settings.billingAccessToken || !this.settings.billingAccountLinked) return { state: "preview", id, diagnostic: `Capture preview: ${Array.from(entry).slice(0,500).join("")}\nKeep this window open. Sign in and verify in settings, then press Save to deliver this exact capture.` };
+    const authorization = await reserveNative({app:this.app,settings:this.settings,persistNative:()=>this.persist()}, "kairo-quick-capture", `evt_${id}`, trimmed, entry, {input_characters:codePoints(trimmed)});
+    if (!authorization) return {state:"preview",id,diagnostic:"Authorization pending. Keep this exact preview open and retry after connecting or purchasing."};
+    const queued: QueuedCapture = { id, createdAt: now.getTime(), destination, entry, attempts: 0, billingPending: true, nativeReservation:true,inputCharacters:codePoints(trimmed),nativeSource:trimmed };
+    this.queue.push(queued);
+    try { await this.persist(); }
+    catch (error) { this.queue = this.queue.filter(item => item.id !== id); return { state: "failed", id, diagnostic: diagnosticSummary(destination, error, id) }; }
+    await this.flushQueue(false);
+    const pending = this.queue.find(item => item.id === id);
+    return pending ? { state: "queued", id, diagnostic: pending.lastError } : { state: "saved", id };
   }
 
   async flushQueue(showNotice: boolean): Promise<void> {
@@ -262,7 +269,18 @@ export default class KairoQuickCapturePlugin extends Plugin {
     let delivered = 0;
     for (const item of pending) {
       try {
-        await this.appendSafely(item.destination, item.entry, item.id);
+        if (item.billingPending && !item.nativeReservation) {
+          if (!await consumeCaptureUse(this, `evt_${item.id}`)) throw new Error("Capture is saved in the queue; billing is pending. Connect or add credits to continue.");
+          item.billingPending = false;
+          await this.persist();
+        }
+        const reservation = item.nativeReservation ? await reserveNative({app:this.app,settings:this.settings,persistNative:()=>this.persist()}, "kairo-quick-capture", `evt_${item.id}`, item.nativeSource || item.entry, item.entry, {input_characters:item.inputCharacters || codePoints(item.entry)}) : null;
+        if (item.nativeReservation && !reservation) throw new Error("Exact capture authorization is pending; nothing delivered.");
+        const writeNeeded=reservation ? await reservation.markWriting([{path:item.destination,marker:`<!-- kairo:${item.id} -->`}]) : true;
+        if(writeNeeded)await this.appendSafely(item.destination, item.entry, item.id);
+        const written = this.app.vault.getAbstractFileByPath(item.destination);
+        if (!(written instanceof TFile) || !(await this.app.vault.read(written)).includes(`<!-- kairo:${item.id} -->`)) throw new Error("Capture outcome uncertain. Keep the durable journal; do not replay blindly.");
+        if (reservation && (await reservation.commit()).kind !== "committed") throw new Error("Capture delivered; charge confirmation pending. Retry the same event.");
         delivered++;
       } catch (error) {
         remaining.push({ ...item, attempts: item.attempts + 1, lastError: diagnosticSummary(item.destination, error, item.id) });
@@ -273,6 +291,7 @@ export default class KairoQuickCapturePlugin extends Plugin {
     // earlier snapshot.
     const addedDuringFlush = this.queue.filter((item) => !pendingIds.has(item.id));
     this.queue = [...remaining, ...addedDuringFlush].sort((a, b) => a.createdAt - b.createdAt);
+    this.settings.completedCaptureCharges = (this.settings.completedCaptureCharges ?? []).filter(id => this.queue.some(item => id === `evt_${item.id}`));
     await this.persist();
     if (showNotice) new Notice(remaining.length ? `Delivered ${delivered}; ${remaining.length} still queued.` : `Delivered ${delivered} queued capture${delivered === 1 ? "" : "s"}.`);
   }
@@ -313,7 +332,7 @@ export default class KairoQuickCapturePlugin extends Plugin {
     const current = file.stat.mtime;
     if (current !== before) throw new DestinationChangedError();
     const markedEntry = `${entry}${entry.endsWith("\n") ? "" : "\n"}<!-- kairo:${marker} -->\n`;
-    await this.app.vault.modify(file, appendText(contents, markedEntry));
+    await this.app.vault.process(file,current=>{if(current.includes(`<!-- kairo:${marker} -->`))return current;if(current!==contents)throw new DestinationChangedError();return appendText(current,markedEntry);});
   }
 
   private async ensureParentFolders(path: string): Promise<void> {
@@ -424,6 +443,7 @@ class CaptureModal extends Modal {
     this.status.setText("Saving…");
     try {
       const result = await this.plugin.capture(this.textarea.value);
+      if (result.state === "preview") { this.status.setText(result.diagnostic || "Preview retained in memory. Keep this window open through sign-in."); return; }
       if (result.state === "saved") {
         this.status.setText("Saved");
         new Notice("Capture saved.");
@@ -449,7 +469,7 @@ class CaptureModal extends Modal {
     copy.addEventListener("click", () => this.plugin.copyDiagnostic(this.diagnostic ?? ""));
   }
 
-  onClose(): void { this.contentEl.empty(); }
+  onClose(): void { this.plugin.clearGuestCapturePreview(); this.contentEl.empty(); }
 }
 
 class QueueModal extends Modal {
@@ -486,11 +506,13 @@ class KairoSettingTab extends PluginSettingTab {
   display(): void {
     const { containerEl } = this;
     containerEl.empty();
-    this.plugin.support.addDiagnosticsSetting(containerEl);
+    new Setting(containerEl).setName("Settings mode").setDesc("Simple shows everyday capture settings. Advanced adds formatting, startup, and troubleshooting.").addDropdown(d => d.addOptions({ simple: "Simple", advanced: "Advanced" }).setValue(this.plugin.settings.settingsMode === "advanced" ? "advanced" : "simple").onChange(async value => { this.plugin.settings.settingsMode = value as "simple" | "advanced"; await this.plugin.persist(); this.display(); }));
+    const advanced = this.plugin.settings.settingsMode === "advanced";
+    if (advanced) this.plugin.support.addDiagnosticsSetting(containerEl);
     containerEl.createEl("p", { text: "Local-first capture. The optional Electron shortcut is active while Obsidian is running; the Obsidian command hotkey is always available as a fallback." });
 
     new Setting(containerEl).setName("Billing & usage").setHeading();
-    containerEl.createEl("p", { text: "Each capture uses 1 credit. Billing accounts get 3 free captures per UTC day across all linked installations. Paid packs are one-time purchases: $1 for 100 uses or $10 for 1,000 uses." });
+    containerEl.createEl("p", { text: "Each delivered capture uses one native unit. Verified accounts receive one lifetime starter allowance, up to five operations. Constance confirms the exact free/purchased split before delivery. Guest previews stay in memory while this window is open." });
     this.usageSummaryEl = containerEl.createEl("p", { cls: "kairo-usage-summary", attr: { role: "status", "aria-live": "polite" } });
     this.renderUsageSummary();
     addBillingAccountSettings(containerEl, {
@@ -502,23 +524,24 @@ class KairoSettingTab extends PluginSettingTab {
       syncBalance: () => syncPurchasedUses(this.plugin),
       refresh: () => this.display(),
     });
-    new Setting(containerEl).setName("Buy capture uses").setDesc("Opens TutivSoft Constance checkout in your browser. Purchases are one-time and linked to this installation.").addButton((button) => button.setButtonText("Buy $1 · 100 uses").onClick(() => openBuyCheckout(this.plugin, "usd_001"))).addButton((button) => button.setButtonText("Buy $10 · 1,000 uses").setCta().onClick(() => openBuyCheckout(this.plugin, "usd_010")));
-    new Setting(containerEl).setName("Refresh purchased balance").setDesc("Pull the latest purchased-use balance from Constance.").addButton((button) => button.setButtonText("Refresh").onClick(async () => { button.setDisabled(true); await syncPurchasedUses(this.plugin); this.renderUsageSummary(); button.setDisabled(false); }));
+    void renderNativePacks(containerEl,{app:this.app,settings:this.plugin.settings,persistNative:()=>this.plugin.persist()},"kairo-quick-capture",async plan=>{ const { openAccountCheckoutByPrice }=await import("./src/billing-checkout"); await openAccountCheckoutByPrice({state:this.plugin.settings,appId:"kairo-quick-capture",installationId:this.plugin.settings.constanceDeviceId,persist:()=>this.plugin.persist(),syncBalance:()=>syncPurchasedUses(this.plugin),refreshSession:async()=>{const a=await import("./src/constance-account");return a.refreshBillingSession(this.plugin.settings,()=>this.plugin.persist());}},plan); });
+    new Setting(containerEl).setName("Automatic delivery").setDesc("Explicitly allow queued captures to write in the background and consume native credits after each server authorization.").addToggle(t=>t.setValue(this.plugin.settings.automaticDeliveryApproved===true).onChange(async value=>{this.plugin.settings.automaticDeliveryApproved=value;await this.plugin.persist();}));
+    new Setting(containerEl).setName("Refresh purchased balance").setDesc("Pull the latest purchased-use balance from Constance.").addButton((button) => button.setButtonText("Refresh").onClick(async () => { button.setDisabled(true); try { await syncPurchasedUses(this.plugin, true); this.renderUsageSummary(); new Notice("Kairo: balance refreshed."); } catch { new Notice("Kairo: balance refresh failed. Check your connection and try again."); } finally { button.setDisabled(false); } }));
 
-    new Setting(containerEl).setName("Global shortcut").setDesc("Desktop accelerator, for example Ctrl+Shift+Space. Restart the shortcut after editing.").addText((text) => text.setValue(this.plugin.settings.shortcut).onChange(async (value) => { this.plugin.settings.shortcut = value.trim() || DEFAULT_SETTINGS.shortcut; this.plugin.refreshShortcut(); await this.plugin.persist(); }));
-    new Setting(containerEl).setName("Vault folder").setDesc("Optional folder inside the current vault. Kairo never writes outside the current vault.").addText((text) => text.setPlaceholder("Leave blank for vault root").setValue(this.plugin.settings.vaultFolder).onChange(async (value) => { this.plugin.settings.vaultFolder = normalizeVaultPath(value); await this.plugin.persist(); }));
+    new Setting(containerEl).setName("Global shortcut").setDesc("Desktop accelerator, for example Ctrl+Shift+Space. Changes apply immediately while Obsidian is running.").addText((text) => text.setValue(this.plugin.settings.shortcut).onChange(async (value) => { this.plugin.settings.shortcut = value.trim() || DEFAULT_SETTINGS.shortcut; this.plugin.refreshShortcut(); await this.plugin.persist(); }));
+    if (advanced) new Setting(containerEl).setName("Vault folder").setDesc("Optional folder inside the current vault. Kairo never writes outside the current vault.").addText((text) => text.setPlaceholder("Leave blank for vault root").setValue(this.plugin.settings.vaultFolder).onChange(async (value) => { this.plugin.settings.vaultFolder = normalizeVaultPath(value); await this.plugin.persist(); }));
     new Setting(containerEl).setName("Destination mode").setDesc("Choose one inbox file or a dated daily-note folder.").addDropdown((dropdown) => dropdown.addOptions({ inbox: "Inbox file", daily: "Daily note" }).setValue(this.plugin.settings.destinationMode).onChange(async (value) => { this.plugin.settings.destinationMode = value as "inbox" | "daily"; await this.plugin.persist(); this.display(); }));
-    new Setting(containerEl).setName("Inbox file").setDesc("Relative Markdown path used in inbox mode.").addText((text) => text.setValue(this.plugin.settings.inboxPath).onChange(async (value) => { this.plugin.settings.inboxPath = normalizeVaultPath(value) || DEFAULT_SETTINGS.inboxPath; await this.plugin.persist(); }));
-    new Setting(containerEl).setName("Daily-note folder").setDesc("Relative folder used in daily-note mode.").addText((text) => text.setValue(this.plugin.settings.dailyFolder).onChange(async (value) => { this.plugin.settings.dailyFolder = normalizeVaultPath(value); await this.plugin.persist(); }));
-    new Setting(containerEl).setName("Daily-note format").setDesc("Filename format: YYYY, MM, DD, HH, mm, ss.").addText((text) => text.setValue(this.plugin.settings.dailyFormat).onChange(async (value) => { this.plugin.settings.dailyFormat = value || DEFAULT_SETTINGS.dailyFormat; await this.plugin.persist(); }));
-    new Setting(containerEl).setName("Timestamp format").setDesc("Template time format: YYYY, MM, DD, HH, mm, ss.").addText((text) => text.setValue(this.plugin.settings.timestampFormat).onChange(async (value) => { this.plugin.settings.timestampFormat = value || DEFAULT_SETTINGS.timestampFormat; await this.plugin.persist(); }));
-    new Setting(containerEl).setName("Capture template").setDesc("Use {{time}}, {{source}}, {{text}}, and {{id}}. The id marker prevents duplicate retries.").addTextArea((text) => text.setValue(this.plugin.settings.template).onChange(async (value) => { this.plugin.settings.template = value || DEFAULT_TEMPLATE; await this.plugin.persist(); }));
+    if (this.plugin.settings.destinationMode === "inbox") new Setting(containerEl).setName("Inbox file").setDesc("Relative Markdown path used in inbox mode.").addText((text) => text.setValue(this.plugin.settings.inboxPath).onChange(async (value) => { this.plugin.settings.inboxPath = normalizeVaultPath(value) || DEFAULT_SETTINGS.inboxPath; await this.plugin.persist(); }));
+    if (this.plugin.settings.destinationMode === "daily") new Setting(containerEl).setName("Daily-note folder").setDesc("Relative folder used in daily-note mode.").addText((text) => text.setValue(this.plugin.settings.dailyFolder).onChange(async (value) => { this.plugin.settings.dailyFolder = normalizeVaultPath(value); await this.plugin.persist(); }));
+    if (advanced) new Setting(containerEl).setName("Daily-note format").setDesc("Filename format: YYYY, MM, DD, HH, mm, ss.").addDropdown(d => d.addOptions({ [this.plugin.settings.dailyFormat]: this.plugin.settings.dailyFormat, ...{ "YYYY-MM-DD": "2026-09-30 (recommended)", "YYYY/MM/DD": "2026/09/30 (year/month folders)", "YYYYMMDD": "20260930 (compact)" } }).setValue(this.plugin.settings.dailyFormat).onChange(async value => { this.plugin.settings.dailyFormat = value; await this.plugin.persist(); }));
+    if (advanced) new Setting(containerEl).setName("Timestamp format").setDesc("Template time format: YYYY, MM, DD, HH, mm, ss.").addDropdown(d => d.addOptions({ [this.plugin.settings.timestampFormat]: this.plugin.settings.timestampFormat, ...{ "YYYY-MM-DD HH:mm": "Date and time (recommended)", "HH:mm": "Time only", "YYYY-MM-DD HH:mm:ss": "Date, time, and seconds" } }).setValue(this.plugin.settings.timestampFormat).onChange(async value => { this.plugin.settings.timestampFormat = value; await this.plugin.persist(); }));
+    if (advanced) new Setting(containerEl).setName("Capture template").setDesc("Use {{time}}, {{source}}, {{text}}, and {{id}}. The id marker prevents duplicate retries.").addTextArea((text) => text.setValue(this.plugin.settings.template).onChange(async (value) => { this.plugin.settings.template = value || DEFAULT_TEMPLATE; await this.plugin.persist(); }));
     new Setting(containerEl).setName("Create missing destinations").setDesc("When enabled, Kairo creates the configured Markdown file on the first capture.").addToggle((toggle) => toggle.setValue(this.plugin.settings.createMissing).onChange(async (value) => { this.plugin.settings.createMissing = value; await this.plugin.persist(); }));
     new Setting(containerEl).setName("Close after saving").setDesc("Close the scratchpad after a successful save.").addToggle((toggle) => toggle.setValue(this.plugin.settings.closeAfterSaving).onChange(async (value) => { this.plugin.settings.closeAfterSaving = value; await this.plugin.persist(); }));
-    new Setting(containerEl).setName("Launch at login").setDesc("Optional desktop convenience. Disabled by default and handled locally by Electron when supported.").addToggle((toggle) => toggle.setValue(this.plugin.settings.launchAtLogin).onChange(async (value) => { this.plugin.settings.launchAtLogin = value; this.plugin.applyLaunchAtLogin(); await this.plugin.persist(); }));
+    if (advanced) new Setting(containerEl).setName("Launch at login").setDesc("Optional desktop convenience. Disabled by default and handled locally by Electron when supported.").addToggle((toggle) => toggle.setValue(this.plugin.settings.launchAtLogin).onChange(async (value) => { this.plugin.settings.launchAtLogin = value; this.plugin.applyLaunchAtLogin(); await this.plugin.persist(); }));
     new Setting(containerEl).setName("Queue").setDesc(`${this.plugin.queue.length} capture${this.plugin.queue.length === 1 ? "" : "s"} waiting for delivery.`).addButton((button) => button.setButtonText("Show queue").onClick(() => new QueueModal(this.app, this.plugin).open())).addButton((button) => button.setButtonText("Flush now").onClick(() => void this.plugin.flushQueue(true)));
-    new Setting(containerEl).setName("Validate destination").setDesc("Check the configured destination without writing a test note.").addButton((button) => button.setButtonText("Validate").onClick(async () => { const result = await this.plugin.validateDestination(); new Notice(result.ok ? `Kairo: destination ready at ${result.path}.` : `Kairo: ${result.reason ?? "destination is not ready"}`); }));
-    void syncPurchasedUses(this.plugin).then(() => this.renderUsageSummary());
+    if (advanced) new Setting(containerEl).setName("Validate destination").setDesc("Check the configured destination without writing a test note.").addButton((button) => button.setButtonText("Validate").onClick(async () => { const result = await this.plugin.validateDestination(); new Notice(result.ok ? `Kairo: destination ready at ${result.path}.` : `Kairo: ${result.reason ?? "destination is not ready"}`); }));
+    void syncPurchasedUses(this.plugin).then(() => this.renderUsageSummary()).catch(() => new Notice("Kairo: could not refresh balance. Use Refresh to retry."));
   }
 
   private renderUsageSummary(): void {
@@ -526,6 +549,6 @@ class KairoSettingTab extends PluginSettingTab {
     normalizeBillingSettings(this.plugin.settings);
     const total = this.plugin.settings.freeUsesRemaining + this.plugin.settings.purchasedUses;
     const account = this.plugin.settings.billingAccountLinked ? "account linked" : "sign in required";
-    this.usageSummaryEl.setText(`Uses remaining: ${total.toLocaleString()} (${this.plugin.settings.freeUsesRemaining} free today + ${this.plugin.settings.purchasedUses.toLocaleString()} purchased; ${account})`);
+    this.usageSummaryEl.setText(`Uses remaining: ${total.toLocaleString()} (${this.plugin.settings.freeUsesRemaining} lifetime free cached + ${this.plugin.settings.purchasedUses.toLocaleString()} purchased; ${account})`);
   }
 }
