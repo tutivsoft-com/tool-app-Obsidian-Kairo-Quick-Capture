@@ -1,77 +1,33 @@
 # Kairo Quick Capture
 
-Version: `3.4.37`
+Version: `3.4.42`
 
-Kairo is a local-first Obsidian scratchpad for capturing fleeting thoughts quickly and delivering them to an inbox file or dated daily note. It supports plain text, pasted text, URLs, and multiline notes without an AI service. Each accepted capture needs an online billing allowance or credit verification.
+Kairo is a local-first Obsidian scratchpad for capturing text and links into an inbox file or daily note. It supports plain text, pasted text, URLs, and multiline notes without an AI service.
 
-## What it does
+## Features
 
-- Opens a small, keyboard-friendly capture modal with Save, Save and close, and Cancel actions.
-- Lets you right-click selected note text to prefill a capture, or right-click a Markdown note to capture its Obsidian link.
-- Lets you capture links for multiple selected Markdown notes or folders from the File Explorer context menu.
-- Registers an optional desktop accelerator while Obsidian is running, plus an Obsidian command hotkey fallback.
-- Appends to an inbox file or creates/appends to a daily note using a configurable template.
-- Stores failed captures in an ordered local queue and retries automatically every minute and when Obsidian is ready.
-- Uses an id marker and a destination-change check to avoid duplicate delivery and accidental overwrites.
-- Provides an on-demand setup command, queue viewer, copyable non-content diagnostics, and optional launch-at-login.
-- Includes optional one-time billing: 3 free captures per UTC calendar day, then 1 credit per accepted capture.
+- Open a keyboard-friendly capture modal, or prefill it from selected note text and links.
+- Capture multiple selected Markdown files or folders from Obsidian's file explorer.
+- Append to an inbox or create and append to a daily note using a configurable template.
+- Queue failed deliveries locally and retry them when the vault is available.
+- Use idempotent delivery markers and destination-change checks to reduce duplicate writes and accidental overwrites.
+- View queued captures and copy diagnostics that exclude captured text.
 
-## Install for development
+## Install
 
-1. Run `npm install` and `npm run build`.
-2. Copy `publish/main.js`, `publish/manifest.json`, and `publish/styles.css` into `<vault>/.obsidian/plugins/kairo-quick-capture/`.
-3. Enable **Kairo Quick Capture** in Obsidian's Community plugins settings.
+Install Kairo Quick Capture from Obsidian's Community plugins browser. To install a development build, copy `main.js`, `manifest.json`, and `styles.css` into `<vault>/.obsidian/plugins/kairo-quick-capture/`, then enable the plugin in Community plugins settings.
 
-The plugin is desktop-only because the optional global accelerator and launch-at-login integrations use Electron when available. The normal Obsidian command remains available if an operating system rejects the accelerator.
+Kairo is desktop-only because its optional global shortcut and launch-at-login features use Electron when available. The normal Obsidian command remains available if the operating system rejects the shortcut.
 
 ## First run
 
-Choose and validate the destination in plugin settings. Kairo does not open a first-run setup window or write a test capture. Missing files are created only when **Create missing destinations** is enabled. Kairo writes only inside the currently open vault; it cannot select or modify a different vault from an Obsidian plugin.
-
-Default destination is `Inbox.md` at the vault root. Daily notes default to `Daily/YYYY-MM-DD.md`. Templates support `{{time}}`, `{{source}}`, `{{text}}`, and `{{id}}`.
+Choose and validate a destination in plugin settings. Kairo does not open a setup window or write a test capture. It writes only inside the currently open vault. The default inbox is `Inbox.md`; daily notes default to `Daily/YYYY-MM-DD.md`. Templates support `{{time}}`, `{{source}}`, `{{text}}`, and `{{id}}`.
 
 ## Billing and usage
 
-Kairo uses TutivSoft Constance's authenticated account endpoints for one-time
-capture credits. The app id is `kairo-quick-capture`; the client links a random
-installation id to the verified billing account, polls
-`/api/v1/billing/entitlements/me`, and sends only the app id, installation id,
-spend amount, and idempotency event id to the free-usage or paid-credit
-endpoints. It never sends captured text to Constance.
+Kairo uses authenticated Constance account and entitlement services for its optional one-time capture credits. Offers, provider amounts, and grants are supplied by the service and shown in settings; the client does not contain fixed purchase prices. Each paid capture uses a server-issued price ID and a persisted checkout identity.
 
-Account registration may require email verification; click the emailed confirmation link, then sign in. Kairo rotates the refresh token so access-token expiry does not interrupt the session. Checkout uses an authenticated catalog-code transaction and polls for settlement.
-Because Kairo is backend-less, it does not hold a shared HMAC secret or receive
-server entitlement callbacks; the bearer-linked installation is the supported
-client flow.
-
-Each UTC calendar day starts with 3 free captures. After those are used, each
-capture consumes 1 purchased credit. The available one-time packs are $1 for
-100 uses and $10 for 1,000 uses. Checkout is linked to Kairo's provisioned
-Constance catalog prices.
-
-A usage claim is made before Kairo attempts delivery, so a storage failure
-after a successful claim can consume a use without saving the capture.
-Captures that reach the retry queue do not incur another claim when retried.
-Confirmed exhaustion blocks a capture; a temporary billing failure blocks
-the capture until the allowance or balance can be verified. If a paid spend
-request has an uncertain result, Kairo keeps its event id for reconciliation
-before allowing another paid capture. The installation id is local plugin
-data and is not a hardware fingerprint.
-
-## Privacy and threat model
-
-Kairo has no AI path, analytics, or cloud queue. The billing account password
-is used for sign-in and is not retained as a password by Kairo. Captured text is
-written only to the configured current-vault destination or Obsidian's plugin
-data while queued. Queue data is plain local application data and inherits the
-operating system and vault permissions. Anyone who can read the vault or
-Obsidian profile can read queued captures. Billing requests contain no capture
-content; checkout may receive the billing email entered by the user for the
-receipt.
-
-The destination-change check protects against Kairo overwriting a file changed between its read and append preparation. A hidden `<!-- kairo:... -->` marker makes retries idempotent. If a write fails, the complete capture remains in the local queue. Diagnostics include only the queue id, destination path, and error reason; they intentionally exclude captured text.
-
-The plugin does not promise capture while Obsidian is fully closed: an Obsidian plugin cannot execute code before Obsidian starts. Captures queued during an unavailable vault are delivered automatically after Obsidian opens and the vault is available. The global accelerator is best-effort and is disabled if Electron rejects the requested shortcut.
+Capture delivery reserves usage before writing, verifies the result, then commits. An uncertain write retains its original operation identity for reconciliation before retry. Billing requests do not contain capture text, vault paths, or note content. Kairo has no AI path, analytics, or cloud queue.
 
 ## Commands
 
@@ -80,19 +36,10 @@ The plugin does not promise capture while Obsidian is fully closed: an Obsidian 
 - **Kairo Quick Capture: Show queued captures**
 - **Kairo Quick Capture: Run setup**
 
-## Product documentation
+## Privacy
 
-- [Features](FEATURES.md)
-- [Requirements](REQUIREMENTS.md)
-- [Software Architecture](SOFTWARE_ARCHITECTURE.md)
-- [Marketing](MARKETING.md)
+Captured text is stored only in the configured vault destination or in Obsidian plugin data while queued. Queue data is local and inherits the operating system and vault permissions. Billing requests contain account/install identifiers and operation metadata, never capture content.
 
 ## License
 
 MIT. See [LICENSE](LICENSE).
-
-<!-- one-click-workflow:start -->
-## Workflow defaults (v3.4.24)
-
-Kairo opens its capture form directly; there is no first-run setup screen. Destination validation is available on demand in Settings.
-<!-- one-click-workflow:end -->
