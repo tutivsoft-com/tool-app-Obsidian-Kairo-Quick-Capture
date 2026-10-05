@@ -1,21 +1,17 @@
 # Kairo Quick Capture
 
-Version: 3.4.45 — release source validated.
+Version: 3.4.51. Validated for publication; release pending.
 
 ## Current purchase behavior
 
 Purchase settings load the current public product catalog from Constance. Each available offer supplies its exact Paddle price ID, native-unit grant, unit name, and formatted amount. The client displays backend-provided amounts, enables only offers marked available, and submits the selected price ID through authenticated checkout with quantity one. Existing account balances and granted credits remain associated with the account.
 
 
-## Preview and lifetime allowance
+## Account lifetime allowance
 
-Guests see a bounded preview held only in memory. Keep the originating window open through registration, email verification and sign-in, then retry that exact result without regeneration. Guests cannot save, apply, export or queue useful output. Closing the preview or restarting loses unrevealed guest content.
+5 captures lifetime per account. One unit per completed capture.
 
-Constance verifies each capture's free allowance or purchased-credit spend and provides current Paddle offers. The plugin loads its configured offers, joins them to live Paddle prices by exact price ID, and uses that ID for authenticated checkout. Kairo does not use Constance as an AI service.
-
-One delivered capture is one native unit; free payload <=2,000 Unicode codepoints. Background queue delivery requires explicit credit-consumption opt-in.
-
-Capture delivery follows durable reserve → write → verify → commit. Unknown writes retain their journal for status/output reconciliation and retry the same operation identity. Billing sends account/install identity, native dimensions and source/result digests, never capture text, vault paths, or note content.
+New operations use authenticated account billing with free units first, then purchased remainder. Native operations preserve reserve, write, verify and commit. No separate reveal or split-confirmation gate is required. Meaningful file/scope review remains.
 
 ## Current settings
 
@@ -28,8 +24,6 @@ Kairo has no AI feature and does not request AI provider keys. Its Constance con
 Use **Connect** with your email and password. A new account is registered; an existing account is authenticated. New users must follow the emailed verification link and Connect again. Incorrect passwords offer password recovery; passwords are never saved. Paid purchases and free allowances belong to the authenticated account, not a locally entered email or an editable cached balance. Reinstalling does not replenish the same account's allowance.
 
 Constance is the billing authority. Credit units remain app-specific: characters, OCR pages, searches, conversions, repair/protection batches, or captures. Checkout return URLs and cached balances never grant credits. Payment fulfillment comes from the server’s verified Paddle webhook, and balances refresh from authenticated entitlements. Unknown usage or checkout results reuse the persisted operation ID; they must not create a new debit or alternative checkout.
-
-
 
 
 Kairo is a local-first Obsidian scratchpad for capturing fleeting thoughts quickly and delivering them to an inbox file or dated daily note. It supports plain text, pasted text, URLs, and multiline notes without an AI service. Each accepted capture needs an online billing allowance or credit verification.

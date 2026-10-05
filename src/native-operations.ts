@@ -1,10 +1,10 @@
-import { App, Modal, Notice, Setting, requestUrl } from "obsidian";
+import { App, Notice, Setting, requestUrl } from "obsidian";
 import * as account from "./constance-account";
 const BASE = "https://app.tutivsoft.com/api/v1";
 export type NativeDimensions = Record<string, number>;
 type State = { billingEmail:string; billingAccessToken: string; billingAccountLinked: boolean; constanceDeviceId: string; billingRefreshToken?: string };
 export type WriteEvidence = {path:string;binary?:boolean;before?:string;after?:string;marker?:string};
-export type Journal = {retry_of?:string;free_units:number;paid_units:number;amount:number;evidence?:WriteEvidence[]; event_id: string; app_id: string; result_digest: string; source_digest: string; state: string; account: string; dimensions: NativeDimensions };
+export type Journal = {protocol?:"usage";retry_of?:string;free_units:number;paid_units:number;amount:number;evidence?:WriteEvidence[]; event_id: string; app_id: string; result_digest: string; source_digest: string; state: string; account: string; dimensions: NativeDimensions };
 type Extended = State & { installationCredential?: string; operationJournal?: Journal[] };
 export type NativeHost = { app: App; settings: State; persistNative(): Promise<void> };
 export async function digest(value: string | ArrayBuffer): Promise<string> {
@@ -31,17 +31,8 @@ async function api(host: NativeHost, path: string, body?: unknown, publicRequest
   if (!response.json?.data) throw new Error("Authorization response is incomplete.");
   return response.json.data;
 }
-class SplitModal extends Modal {
-  constructor(app: App, private split: any, private resolve: (confirmed: boolean) => void) { super(app); }
-  onOpen(): void {
-    this.contentEl.createEl("h2",{text:"Confirm useful operation"});
-    this.contentEl.createEl("p",{text:`This exact result uses ${this.split.free_units} free units and ${this.split.paid_units} purchased units. Full reveal consumes the operation once; applying that result again does not. Purchased credits do not expire.`});
-    new Setting(this.contentEl).addButton(b=>b.setButtonText("Confirm").setCta().onClick(()=>{ this.resolve(true); this.close(); }));
-  }
-  onClose(): void { this.resolve(false); this.contentEl.empty(); }
-}
 export interface NativeReservation { source: "free" | "purchased"; markWriting(evidence?:WriteEvidence[]): Promise<boolean>; commit(): Promise<{kind:"committed"|"pending"}>; rollback(): Promise<void>; }
-export async function reserveNative(host: NativeHost, appId: string, eventId: string, source: string, result: string, dimensions: NativeDimensions, reveal = false): Promise<NativeReservation | null> {
+export async function reserveLegacyNative(host: NativeHost, appId: string, eventId: string, source: string, result: string, dimensions: NativeDimensions, reveal = false): Promise<NativeReservation | null> {
   const state = host.settings as Extended;
   try {
     const source_digest = await digest(source), result_digest = await digest(result);
@@ -66,10 +57,10 @@ export async function reserveNative(host: NativeHost, appId: string, eventId: st
     const body = {app_id:appId,installation_id:state.constanceDeviceId,event_id:eventId,amount,source_digest,result_digest,dimensions,installation_credential:state.installationCredential};
     const quote = await api(host,"/billing/operations/quote",body);
     if(quote.event_id!==eventId||quote.app_id!==appId||quote.installation_id!==state.constanceDeviceId||quote.source_digest!==source_digest||quote.result_digest!==result_digest||quote.amount!==amount)throw new Error("Quote identity conflicts with the preserved operation. Nothing was confirmed or written.");
-    if(!Number.isInteger(quote.free_units)||!Number.isInteger(quote.paid_units)||quote.free_units<0||quote.paid_units<0||quote.free_units+quote.paid_units!==amount)throw new Error("Invalid server cost split.");
+    if(!Number.isInteger(quote.free_units)||!Number.isInteger(quote.paid_units)||quote.free_units<0||quote.paid_units<0||(quote.free_units+quote.paid_units!==amount && !(quote.retained_access === true && quote.free_units === 0 && quote.paid_units === 0)))throw new Error("Invalid server cost split.");
     if(quote.allowed===false)throw new Error(quote.message || "This operation is not authorized. Keep the preview and sign in to the original account, reduce the selection, or purchase.");
     if(existing && existing.state!=="released" && (existing.free_units!==quote.free_units||existing.paid_units!==quote.paid_units))throw new Error("The original confirmed split changed. Nothing was written; reconcile the original operation.");
-    if ((!existing || existing.state==="released") && !await new Promise<boolean>(resolve=>new SplitModal(host.app,quote,resolve).open())) return null;
+
     const journal: Journal = existing || {event_id:eventId,app_id:appId,source_digest,result_digest,amount,free_units:quote.free_units,paid_units:quote.paid_units,dimensions,state:"requesting",account:owner,...(eventId!==originalEventId?{retry_of:originalEventId}:{})};
     if (!existing) { state.operationJournal = [...(state.operationJournal || []),journal]; await host.persistNative(); }
     const reserved = await api(host,"/billing/operations/reserve",{...body,expected_free_units:quote.free_units,expected_paid_units:quote.paid_units});
@@ -98,6 +89,81 @@ export async function reserveNative(host: NativeHost, appId: string, eventId: st
     return reservation;
   } catch(error) { new Notice(error instanceof Error ? error.message : String(error)); return null; }
 }
+
+/** Shared authenticated free-first ledger; old reservation journals retain their original recovery path. */
+export async function reserveNative(host: NativeHost, appId: string, eventId: string, source: string, result: string, dimensions: NativeDimensions, reveal = false): Promise<NativeReservation | null> {
+  const state = host.settings as Extended;
+  const prior = (state.operationJournal || []).find(j => j.event_id === eventId || j.retry_of === eventId);
+  if (prior && prior.protocol !== "usage") return reserveLegacyNative(host, appId, eventId, source, result, dimensions, reveal);
+  try {
+    if (!state.billingAccountLinked || !state.billingAccessToken) throw new Error("Create an account or sign in in plugin settings, then Connect to use your free allowance.");
+    await recoverNative(host);
+    const owner = state.billingEmail.trim().toLowerCase(), source_digest = await digest(source), result_digest = await digest(result), amount = nativeCost(appId, dimensions);
+    const pendingExact = (state.operationJournal || []).find(j => j.protocol === "usage" && j.app_id === appId && j.account === owner && j.source_digest === source_digest && j.result_digest === result_digest && j.amount === amount && JSON.stringify(j.dimensions) === JSON.stringify(dimensions) && (["requesting", "reserved", "writing", "verified"].includes(j.state) || (j.state === "committed" && Boolean(j.evidence?.length))));
+    if (pendingExact) eventId = pendingExact.event_id;
+    let journal = (state.operationJournal || []).find(j => j.event_id === eventId);
+    if (journal && (journal.account !== owner || journal.app_id !== appId || journal.source_digest !== source_digest || journal.result_digest !== result_digest || journal.amount !== amount || JSON.stringify(journal.dimensions) !== JSON.stringify(dimensions))) throw new Error("This operation's account or source changed. Recover the original operation before starting a new one.");
+    if (journal?.state === "uncertain_released") throw new Error("A possible local write needs reconciliation. No new charge or write was started.");
+    if ((state.operationJournal || []).some(j => j.app_id === appId && j.account === owner && j.event_id !== eventId && ["requesting", "reserved", "writing", "verified"].includes(j.state))) throw new Error("Recover the previous pending operation before starting another one.");
+    if (!journal) {
+      journal = { protocol: "usage", event_id: eventId, app_id: appId, source_digest, result_digest, amount, free_units: -1, paid_units: -1, dimensions, state: "requesting", account: owner };
+      state.operationJournal = [...(state.operationJournal || []), journal];
+      await host.persistNative();
+    }
+    if (journal.state === "released") throw new Error("This canceled operation cannot be replayed. Start a new operation.");
+    let row;
+    try { row = await api(host, "/billing/usage/reserve", usageBody(journal, state)); }
+    catch(error) { if ((error as any)?.status === 402) { journal.state="denied"; await host.persistNative(); } throw error; }
+    adoptUsageSplit(row, journal, state.constanceDeviceId);
+    applyUsageBalance(row,state);
+    if (row.state === "released") { journal.state = journal.evidence?.length ? "uncertain_released" : "released"; await host.persistNative(); throw new Error("This operation was released; recover its original result before retrying."); }
+    if (!["reserved", "committed"].includes(row.state)) throw new Error("Operation authorization is incomplete.");
+    if (!["writing", "verified", "committed"].includes(journal.state)) journal.state = row.state;
+    await host.persistNative();
+    const retained = journal;
+    const settle = async (action: string) => { const response = await api(host, `/billing/usage/${encodeURIComponent(eventId)}/${action}`, { app_id: appId, installation_id: state.constanceDeviceId, result_digest }); assertJournalIdentity(response, retained, state.constanceDeviceId); applyUsageBalance(response,state); return response; };
+    const reservation: NativeReservation = {
+      source: row.paid_units > 0 ? "purchased" : "free",
+      markWriting: async evidence => {
+        if (!["reserved", "committed"].includes(retained.state)) throw new Error("No active operation hold. Nothing was written.");
+        if (retained.state === "committed" && retained.evidence?.length) return false;
+        if (retained.state !== "committed") retained.state = "writing";
+        retained.evidence = evidence; await host.persistNative(); return true;
+      },
+      commit: async () => {
+        if (retained.state === "committed") return { kind: "committed" };
+        retained.state = "verified"; await host.persistNative();
+        try { const committed = await settle("commit"); if (committed.state !== "committed") throw new Error("Commit pending"); retained.state = "committed"; await host.persistNative(); return { kind: "committed" }; } catch { return { kind: "pending" }; }
+      },
+      rollback: async () => {
+        if (["writing", "verified", "committed"].includes(retained.state)) { new Notice("The write outcome needs recovery; its charge cannot be blindly refunded."); return; }
+        const released = await settle("release"); retained.state = released.state; await host.persistNative();
+      }
+    };
+    if (reveal && (await reservation.commit()).kind !== "committed") throw new Error("Operation confirmation pending. Retry the same result after reconnecting.");
+    return reservation;
+  } catch (error) { new Notice(error instanceof Error ? error.message : String(error)); return null; }
+}
+function applyUsageBalance(remote: any, state: Extended): void {
+  const cached = state as Extended & Record<string, any>;
+  const remaining = remote.free_usage?.remaining, balance = remote.credits?.balance;
+  if (Number.isSafeInteger(remaining) && remaining >= 0) {
+    for (const key of ["freeUsesRemaining", "freeConversionsRemaining"]) if (key in cached) cached[key] = remaining;
+    if ("freeRepairBatchesUsed" in cached && Number.isSafeInteger(remote.free_usage?.allowance)) cached.freeRepairBatchesUsed = Math.max(0, remote.free_usage.allowance - remaining);
+    if ("freeUsesUsed" in cached && Number.isSafeInteger(remote.free_usage?.allowance)) cached.freeUsesUsed = Math.max(0, remote.free_usage.allowance - remaining);
+  }
+  if (Number.isSafeInteger(balance) && balance >= 0) for (const key of ["purchasedUses", "purchasedConversions", "purchasedRepairBatches"]) if (key in cached) cached[key] = balance;
+}
+function usageBody(journal: Journal, state: Extended): Record<string, unknown> {
+  return { app_id: journal.app_id, installation_id: state.constanceDeviceId, event_id: journal.event_id, amount: journal.amount, source_digest: journal.source_digest, result_digest: journal.result_digest, dimensions: journal.dimensions };
+}
+function adoptUsageSplit(remote: any, journal: Journal, installationId: string): void {
+  if (!Number.isSafeInteger(remote.free_units) || !Number.isSafeInteger(remote.paid_units) || remote.free_units < 0 || remote.paid_units < 0 || (remote.free_units + remote.paid_units !== journal.amount && !(remote.retained_access === true && remote.free_units === 0 && remote.paid_units === 0))) throw new Error("Invalid account usage response.");
+  const expected = { ...journal, free_units: remote.free_units, paid_units: remote.paid_units };
+  assertJournalIdentity(remote, expected, installationId);
+  if (journal.free_units >= 0 && (journal.free_units !== remote.free_units || journal.paid_units !== remote.paid_units)) throw new Error("Existing account operation split changed.");
+  journal.free_units = remote.free_units; journal.paid_units = remote.paid_units;
+}
 function assertJournalIdentity(remote:any,journal:Journal,installationId:string):void{
   if(remote.event_id!==journal.event_id||remote.app_id!==journal.app_id||remote.installation_id!==installationId||remote.source_digest!==journal.source_digest||remote.result_digest!==journal.result_digest||remote.amount!==journal.amount||remote.free_units!==journal.free_units||remote.paid_units!==journal.paid_units)throw Object.assign(new Error("Operation response conflicts with its immutable journal."),{identityMismatch:true});
 }
@@ -106,9 +172,9 @@ export async function recoverNative(host:NativeHost):Promise<void>{
   for(const journal of state.operationJournal || []){
     if(!["requesting","writing","verified","reserved"].includes(journal.state)||journal.account!==state.billingEmail.trim().toLowerCase())continue;
     try {
-      const remote=await api(host,`/billing/operations/${encodeURIComponent(journal.event_id)}?app_id=${encodeURIComponent(journal.app_id)}&installation_id=${encodeURIComponent(state.constanceDeviceId)}`);
-      assertJournalIdentity(remote,journal,state.constanceDeviceId);
-      if(remote.state==="committed"){journal.state="committed";await host.persistNative();continue;}
+      const remote=await api(host,`/billing/${journal.protocol === "usage" ? "usage" : "operations"}/${encodeURIComponent(journal.event_id)}?app_id=${encodeURIComponent(journal.app_id)}&installation_id=${encodeURIComponent(state.constanceDeviceId)}`);
+      if(journal.protocol === "usage") adoptUsageSplit(remote,journal,state.constanceDeviceId); else assertJournalIdentity(remote,journal,state.constanceDeviceId);
+      if(remote.state==="committed"){if(journal.protocol === "usage")applyUsageBalance(remote,state);journal.state="committed";await host.persistNative();continue;}
       if(remote.state==="released"){
         if(journal.state==="writing"||journal.evidence?.length){journal.state="uncertain_released";await host.persistNative();continue;}
         journal.state="released";await host.persistNative();continue;
@@ -124,13 +190,13 @@ export async function recoverNative(host:NativeHost):Promise<void>{
         }));
         if(outcomes.length===0||outcomes.some(outcome=>outcome!=="after"))continue;
       }
-      const remoteCommit=await api(host,`/billing/operations/${encodeURIComponent(journal.event_id)}/commit`,{app_id:journal.app_id,installation_id:state.constanceDeviceId,result_digest:journal.result_digest});
+      const remoteCommit=await api(host,`/billing/${journal.protocol === "usage" ? "usage" : "operations"}/${encodeURIComponent(journal.event_id)}/commit`,{app_id:journal.app_id,installation_id:state.constanceDeviceId,result_digest:journal.result_digest});
       assertJournalIdentity(remoteCommit,journal,state.constanceDeviceId);
-      if(remoteCommit.state==="committed"&&remoteCommit.result_digest===journal.result_digest&&remoteCommit.source_digest===journal.source_digest){journal.state="committed";await host.persistNative();}
+      if(remoteCommit.state==="committed"&&remoteCommit.result_digest===journal.result_digest&&remoteCommit.source_digest===journal.source_digest){if(journal.protocol === "usage")applyUsageBalance(remoteCommit,state);journal.state="committed";await host.persistNative();}
     }catch(error){
       if(journal.state==="requesting" && !(error as any)?.identityMismatch && (!(error as any)?.status || (error as any).status===404 || (error as any).status>=500))try {
-        const remote=await api(host,"/billing/operations/reserve",{app_id:journal.app_id,installation_id:state.constanceDeviceId,event_id:journal.event_id,amount:journal.amount,source_digest:journal.source_digest,result_digest:journal.result_digest,dimensions:journal.dimensions,expected_free_units:journal.free_units,expected_paid_units:journal.paid_units,installation_credential:state.installationCredential});
-        assertJournalIdentity(remote,journal,state.constanceDeviceId);journal.state=remote.state;await host.persistNative();
+        const remote=await api(host,journal.protocol === "usage" ? "/billing/usage/reserve" : "/billing/operations/reserve",journal.protocol === "usage" ? usageBody(journal,state) : {app_id:journal.app_id,installation_id:state.constanceDeviceId,event_id:journal.event_id,amount:journal.amount,source_digest:journal.source_digest,result_digest:journal.result_digest,dimensions:journal.dimensions,expected_free_units:journal.free_units,expected_paid_units:journal.paid_units,installation_credential:state.installationCredential});
+        if(journal.protocol === "usage") adoptUsageSplit(remote,journal,state.constanceDeviceId); else assertJournalIdentity(remote,journal,state.constanceDeviceId);journal.state=remote.state;await host.persistNative();
       }catch{ /* Replay only the durable authorization request, never content writes. */ }
     }
   }
@@ -157,15 +223,15 @@ export function joinCurrentPacks(catalog:any, legacyLive?:any, legacyAppId?:stri
   });
 }
 export async function renderNativePacks(container: HTMLElement, host: NativeHost, appId: string, buy: (priceId:string)=>Promise<void>): Promise<void> {
-  const root=container.createDiv(); root.createEl("p",{text:"Loading current Paddle prices…"});
+  const root=container.createDiv(); root.createEl("p",{text:"Loading current Paddle pricesÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¦"});
   try {
     const catalog=await api(host,`/billing/public-products?app_id=${encodeURIComponent(appId)}`,undefined,true);
     const offers=joinCurrentPacks(catalog);
     if(!offers.length)throw new Error("No configured one-time offers");
     root.empty();
     for(const {pack,price,priceId,units,unit,available} of offers) {
-      const details=[pack?.description,Number.isSafeInteger(units)&&units>0?`${units.toLocaleString()} ${unit}`:"",available?"":pack?.availability_reason||"Current price unavailable"].filter(Boolean).join(" · ");
-      new Setting(root).setName(pack?.name||pack?.code||"One-time offer").setDesc(details).addButton(b=>b.setButtonText(available?pack.formatted_total:"Pricing unavailable").setDisabled(!available).onClick(()=>void buy(priceId)));
+      const details=[pack?.description,Number.isSafeInteger(units)&&units>0?`${units.toLocaleString()} ${unit}`:"",available?"":pack?.availability_reason||"Current price unavailable"].filter(Boolean).join(" ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â· ");
+      new Setting(root).setName(pack?.price_name||pack?.name||pack?.code||"One-time offer").setDesc(details).addButton(b=>b.setButtonText(available?pack.formatted_total:"Pricing unavailable").setDisabled(!available).onClick(()=>void buy(priceId)));
     }
   } catch { root.empty(); root.createEl("p",{text:"Pricing temporarily unavailable. Buying is disabled; keep your preview open."}); }
 }

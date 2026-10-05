@@ -223,7 +223,6 @@ export default class KairoQuickCapturePlugin extends Plugin {
   async capture(text: string): Promise<{ state: "saved" | "queued" | "failed" | "preview"; id: string; diagnostic?: string }> {
     const trimmed = text.trimEnd();
     if (!trimmed.trim()) throw new Error("Capture is empty.");
-    if(!this.settings.billingAccountLinked && codePoints(trimmed)>2000)throw new Error("Guest capture preview supports up to 2,000 characters. Select a smaller capture; input was not truncated or saved.");
     const preserved = this.capturePreview?.text === trimmed ? this.capturePreview : undefined;
     const id = preserved?.id || this.makeId();
     const now = new Date(preserved?.createdAt || Date.now());
@@ -235,7 +234,7 @@ export default class KairoQuickCapturePlugin extends Plugin {
       id,
     });
     this.capturePreview = { text: trimmed, id, createdAt: now.getTime(), destination, entry };
-    if (!this.settings.billingAccessToken || !this.settings.billingAccountLinked) return { state: "preview", id, diagnostic: `Capture preview: ${Array.from(entry).slice(0,500).join("")}\nKeep this window open. Sign in and verify in settings, then press Save to deliver this exact capture.` };
+    if (!this.settings.billingAccessToken || !this.settings.billingAccountLinked) return { state: "preview", id, diagnostic: "Connect your account in plugin settings to save this capture using your free allowance." };
     const authorization = await reserveNative({app:this.app,settings:this.settings,persistNative:()=>this.persist()}, "kairo-quick-capture", `evt_${id}`, trimmed, entry, {input_characters:codePoints(trimmed)});
     if (!authorization) return {state:"preview",id,diagnostic:"Authorization pending. Keep this exact preview open and retry after connecting or purchasing."};
     const queued: QueuedCapture = { id, createdAt: now.getTime(), destination, entry, attempts: 0, billingPending: true, nativeReservation:true,inputCharacters:codePoints(trimmed),nativeSource:trimmed };
@@ -511,7 +510,7 @@ class KairoSettingTab extends PluginSettingTab {
     containerEl.createEl("p", { text: "Local-first capture. The optional Electron shortcut is active while Obsidian is running; the Obsidian command hotkey is always available as a fallback." });
 
     new Setting(containerEl).setName("Billing & usage").setHeading();
-    containerEl.createEl("p", { text: "Each delivered capture uses one native unit. Verified accounts receive one lifetime starter allowance, up to five operations. Constance confirms the exact free/purchased split before delivery. Guest previews stay in memory while this window is open." });
+    containerEl.createEl("p", { text: "Each delivered capture uses one credit. Connected, verified accounts receive 5 lifetime free captures. Constance confirms the remaining allowance before delivery. An account is required to save captures." });
     this.usageSummaryEl = containerEl.createEl("p", { cls: "kairo-usage-summary", attr: { role: "status", "aria-live": "polite" } });
     this.renderUsageSummary();
     addBillingAccountSettings(containerEl, {
@@ -548,6 +547,6 @@ class KairoSettingTab extends PluginSettingTab {
     normalizeBillingSettings(this.plugin.settings);
     const total = this.plugin.settings.freeUsesRemaining + this.plugin.settings.purchasedUses;
     const account = this.plugin.settings.billingAccountLinked ? "account linked" : "sign in required";
-    this.usageSummaryEl.setText(`Uses remaining: ${total.toLocaleString()} (${this.plugin.settings.freeUsesRemaining} lifetime free cached + ${this.plugin.settings.purchasedUses.toLocaleString()} purchased; ${account})`);
+    this.usageSummaryEl.setText(!this.plugin.settings.billingAccountLinked || !this.plugin.settings.billingAccessToken ? "Create an account or sign in, then Connect to activate your lifetime free allowance and confirm your balance." : `Uses remaining: ${total.toLocaleString()} (${this.plugin.settings.freeUsesRemaining} lifetime free cached + ${this.plugin.settings.purchasedUses.toLocaleString()} purchased; ${account})`);
   }
 }
