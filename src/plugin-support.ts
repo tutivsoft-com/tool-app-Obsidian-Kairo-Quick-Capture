@@ -1,3 +1,4 @@
+import { diagnostics } from "./diagnostics";
 import { App, Modal, Notice, Plugin, Setting } from "obsidian";
 import type { Command } from "obsidian";
 
@@ -20,7 +21,7 @@ const SAFE_DETAIL_KEYS = new Set([
   "version", "operation", "scope", "selectedCount", "total", "changed", "skipped",
   "failed", "unchanged", "reviewEnabled", "fieldCount", "noteChars", "httpStatus",
   "errorType", "outcome", "restored", "authorizationSource", "cancelled", "line",
-  "column", "settingCount", "attempt", "attempts", "queueCount", "itemCount",
+  "column", "span", "settingCount", "attempt", "attempts", "queueCount", "itemCount",
   "fileCount", "imageCount", "stage", "category", "status", "durationMs", "elapsedMs",
 ]);
 
@@ -31,14 +32,22 @@ function safeString(value: string): string {
   return "[omitted]";
 }
 
+function isError(value: unknown): value is Error {
+  return value instanceof Error || Object.prototype.toString.call(value) === "[object Error]";
+}
+
 function safeDetail(value: unknown): string {
-  if (value instanceof Error) return JSON.stringify({ errorType: safeString(value.name || "Error") });
+  if (isError(value)) { const status = (value as Error & { httpStatus?: number }).httpStatus; return JSON.stringify({ errorType: safeString(value.name || "Error"), ...(typeof status === "number" && Number.isFinite(status) ? { httpStatus: status } : {}) }); }
   if (!value || typeof value !== "object" || Array.isArray(value)) return "[detail omitted]";
 
   const safe: Record<string, string | number | boolean | null> = {};
   for (const [key, item] of Object.entries(value)) {
     if (!SAFE_DETAIL_KEYS.has(key)) continue;
-    if (typeof item === "string") safe[key] = safeString(item);
+    if (typeof item === "string") {
+      if (key === "version" && /^\d+\.\d+\.\d+$/.test(item)) safe[key] = item;
+      else if (key === "errorType") safe[key] = ["Error", "TypeError", "RangeError", "SyntaxError", "AbortError"].includes(item) ? item : "Error";
+      else if (key === "outcome" && ["failed", "cancelled", "completed"].includes(item)) safe[key] = item;
+    }
     else if (typeof item === "number" && Number.isFinite(item)) safe[key] = item;
     else if (typeof item === "boolean" || item === null) safe[key] = item;
   }
@@ -46,31 +55,45 @@ function safeDetail(value: unknown): string {
 }
 
 function safeErrorType(error: unknown): string {
-  if (error instanceof Error) return safeString(error.name || "Error");
+  if (isError(error)) return safeString(error.name || "Error");
   return safeString(typeof error);
 }
 
 class DocumentationModal extends Modal {
-  constructor(app: App, private readonly docs: PluginDocumentation) { super(app); }
-
+  constructor(app: App, private readonly docs: PluginDocumentation, private readonly plugin?: Plugin, private readonly welcome = false) { super(app); }
   onOpen(): void {
-    this.titleEl.setText(this.docs.name + " documentation");
+return diagnostics.guard("plugin-support.onOpen_1", () => {
+    this.titleEl.setText(this.welcome ? "Welcome to " + this.docs.name : this.docs.name + " Help");
     this.contentEl.createEl("p", { text: this.docs.summary });
-    const addSection = (title: string, items: string[]) => {
-      this.contentEl.createEl("h3", { text: title });
-      const list = this.contentEl.createEl("ol");
-      for (const item of items) list.createEl("li", { text: item });
-    };
-    this.contentEl.createEl("p", { text: "Open plugin settings to create an account or sign in. Verify your email if requested, then select Connect. Registered accounts receive 5 captures over the lifetime of your account as a thank-you for trying the app." });
-    this.contentEl.createEl("p", { text: "Free usage requires a connected account to prevent abuse of the allowance. When the app meets your needs, you can add more credits through affordable credit packs; current prices appear in settings." });
-    this.contentEl.createEl("p", { text: "Choose an inbox or daily-note destination, open Quick Capture, review your text, then Save." });
-    new Setting(this.contentEl).setName("Get started").addButton(button => button.setButtonText("Create account / Sign in").setCta().onClick(() => { const setting = (this.app as any).setting; setting?.open(); setting?.openTabById("kairo-quick-capture"); this.close(); }));
-    addSection("Quick start", this.docs.quickStart);
-    addSection("Useful commands", Array.from(new Set([...this.docs.commands, "Copy full debug log"])));
-    addSection("Troubleshooting", this.docs.troubleshooting);
-  }
+    const steps = this.contentEl.createEl("ol");
+    this.docs.quickStart.forEach(text => steps.createEl("li", { text }));
+    const settings = () => { const target = (this.app as any).setting; target?.open(); target?.openTabById(this.plugin?.manifest.id); this.close(); };
+    new Setting(this.contentEl).addButton(button => button.setButtonText("Open account").setCta().onClick(diagnostics.wrap("plugin-support.control_2", settings)))
+      .addButton(button => button.setButtonText("Open Quick Capture").onClick(() => {
+return diagnostics.guard("plugin-support.control_3", () => {
+        const commands = (this.app as any).commands;
+        const id = this.plugin?.manifest.id + ":" + "open-capture";
+        const available = commands?.executeCommandById?.(id);
+        if (available === false || !commands?.executeCommandById) new Notice("Open the command palette and choose " + this.docs.name + ". Check the selected note or attachment first.");
+        this.close();
 
-  onClose(): void { this.contentEl.empty(); }
+});
+}));
+    const section = (title: string, items: string[]) => { const details = this.contentEl.createEl("details"); details.createEl("summary", { text: title }); const list = details.createEl("ul"); items.forEach(text => list.createEl("li", { text })); return details; };
+    const problems = section("Common problems", ["Email not received? Check spam, confirm the address in Account, then use Connect again after verification. Use the account page for recovery; do not create another account to recover purchases.", ...this.docs.troubleshooting]);
+    new Setting(problems).addButton(button => button.setButtonText("Open account").onClick(diagnostics.wrap("plugin-support.control_4", settings)));
+    problems.createEl("a", { text: "Forgot password?", href: "https://app.tutivsoft.com/password-reset", attr: { target: "_blank", rel: "noopener noreferrer" } });
+    section("Account and purchases", ["Your remaining free allowance and purchases belong to your account. Your credit balance stays with your account after reinstalling. Current prices are shown in Account. Refresh balance after a delayed payment instead of purchasing again."]);
+    section("Advanced settings — optional", ["Simple shows everyday controls. Open Settings and choose Advanced for more customization and troubleshooting. Switching views keeps saved preferences."]);
+    section("Useful commands", Array.from(new Set([...this.docs.commands, "Open documentation", "Copy diagnostic log"])));
+    section("Removing the app", ["Removing this plugin does not undo edits or delete your account. Export anything you want to keep before removing it in Obsidian Settings → Community plugins. Reconnect the same account after reinstalling to restore its remaining allowance and purchases. Open the capture queue and deliver or copy pending captures before removing the plugin."]);
+
+});
+}
+  onClose(): void {
+return diagnostics.guard("plugin-support.onClose_5", () => { this.contentEl.empty();
+});
+}
 }
 
 /**
@@ -82,8 +105,42 @@ export class PluginSupport {
   private readonly maxEntries = 1000;
   private droppedEntries = 0;
   private started = false;
+  private lastFailureNotice = 0;
+  private readonly knownCommands = new Set(["toggle-debug-logging","open-documentation","copy-debug-log","open-plugin-settings","open-capture","flush-queue","show-queue"]);
+  private readonly repetitions = new Map<string, { at: number; count: number }>();
 
-  constructor(private readonly plugin: Plugin, private readonly docs: PluginDocumentation) {}
+  constructor(private readonly plugin: Plugin, private readonly docs: PluginDocumentation) {
+    diagnostics.attach(this, () => this.debugEnabled());
+    this.plugin.register(() => diagnostics.guard("plugin-support.event_6", () => (diagnostics.detach(this))));
+  }
+
+  private debugEnabled(): boolean {
+    return (this.plugin as Plugin & { settings?: { debugLogging?: boolean } }).settings?.debugLogging === true;
+  }
+
+  addDebugSetting(containerEl: HTMLElement): void {
+    const renderEnd = diagnostics.start("settings.render.debug_logging");
+    try {
+      new Setting(containerEl).setName("Debug logging").setDesc("Record detailed activity logs for troubleshooting. Off by default.")
+        .addToggle(toggle => toggle.setValue(this.debugEnabled()).onChange(value => diagnostics.guard("plugin-support.control_7", () => (this.setDebugLogging(value)))));
+    } finally { renderEnd(); }
+  }
+
+  async setDebugLogging(value: boolean): Promise<void> {
+    const host = this.plugin as Plugin & { settings: { debugLogging?: boolean }; persist?: () => Promise<void>; saveSettings?: () => Promise<void> };
+    const previous = host.settings.debugLogging;
+    host.settings.debugLogging = value;
+    const end = diagnostics.start("settings.debug_logging.callback");
+    try {
+      if (host.persist) await host.persist();
+      else if (host.saveSettings) await host.saveSettings();
+      else await host.saveData(host.settings);
+    } catch (error) {
+      diagnostics.failure("settings.debug_logging.callback", error);
+      host.settings.debugLogging = previous;
+      throw error;
+    } finally { end(); }
+  }
 
   start(): void {
     if (this.started) return;
@@ -91,27 +148,32 @@ export class PluginSupport {
 
     this.info("plugin.loaded", { version: this.plugin.manifest.version });
     this.plugin.registerDomEvent(window, "error", (event: ErrorEvent) => {
-      const error = event.error;
-      this.error("runtime.error", {
-        errorType: error instanceof Error ? error.name : "ErrorEvent",
-        line: event.lineno,
-        column: event.colno,
-      });
-    });
+return diagnostics.guard("plugin-support.event_8", () => {
+      const source = event.filename || event.error?.stack || "";
+      if (source && !source.includes("plugin:" + this.plugin.manifest.id)) return;
+      this.error("runtime.error", event.error || new Error(event.message || "Uncaught runtime error"));
+
+});
+});
     this.plugin.registerDomEvent(window, "unhandledrejection", (event: PromiseRejectionEvent) => {
-      this.error("runtime.unhandled_rejection", { errorType: safeErrorType(event.reason) });
-    });
+return diagnostics.guard("plugin-support.event_9", () => {
+      const source = event.reason?.stack || "";
+      if (source && !source.includes("plugin:" + this.plugin.manifest.id)) return;
+      diagnostics.failure("runtime.unhandled_rejection", event.reason);
+
+});
+});
 
     const addCommand = this.plugin.addCommand.bind(this.plugin);
     const registerCommand = (command: Command) => addCommand(this.instrumentCommand(command));
     registerCommand({
       id: "open-documentation",
       name: "Open documentation",
-      callback: () => new DocumentationModal(this.plugin.app, this.docs).open(),
+      callback: () => new DocumentationModal(this.plugin.app, this.docs, this.plugin).open(),
     });
     registerCommand({
       id: "copy-debug-log",
-      name: "Copy full debug log",
+      name: "Copy diagnostic log",
       callback: () => this.copyDiagnostics(),
     });
     registerCommand({
@@ -124,30 +186,76 @@ export class PluginSupport {
       },
     });
 
-    this.plugin.app.workspace.onLayoutReady(() => {
-      const status = this.plugin.addStatusBarItem();
-      status.setText("Kairo: connect account for your free allowance");
-      status.setAttribute("role", "button");
-      status.setAttribute("tabindex", "0");
-      status.setAttribute("aria-label", "Open account setup and free allowance guide");
-      const openGuide = () => new DocumentationModal(this.plugin.app, this.docs).open();
-      this.plugin.registerDomEvent(status, "click", openGuide);
-      this.plugin.registerDomEvent(status, "keydown", event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); openGuide(); } });
-      const state = () => (this.plugin as Plugin & { settings: Record<string, any> }).settings;
-      const update = () => { status.style.display = state()?.billingAccountLinked && state()?.billingAccessToken ? "none" : ""; };
-      update();
-      this.plugin.registerInterval(window.setInterval(update, 1000));
-      if (!state()?.billingAccountLinked && !state()?.billingOnboardingSeen) {
-        state().billingOnboardingSeen = true;
-        void this.plugin.saveData(state()).then(openGuide).catch(() => { state().billingOnboardingSeen = false; });
-      }
+
+
+    registerCommand({
+      id: "toggle-debug-logging",
+      name: "Toggle debug logging",
+      callback: async () => {
+        try {
+          await this.setDebugLogging(!this.debugEnabled());
+          new Notice(this.docs.name + ": debug logging " + (this.debugEnabled() ? "enabled." : "disabled."));
+        } catch (caughtError10) {
+diagnostics.failure("plugin-support.caught_11", caughtError10);
+          new Notice(this.docs.name + ": could not save the logging setting. Try again.");
+        }
+      },
     });
     this.instrumentFutureCommands(addCommand);
+  }
+
+  /** Called after settings and first-action commands have loaded, including on a ready workspace. */
+  showWelcome(): void {
+    this.plugin.app.workspace.onLayoutReady(() => {
+return diagnostics.guard("plugin-support.event_12", () => {
+      const host = this.plugin as Plugin & { settings: Record<string, any>; persist?: () => Promise<void>; saveSettings?: () => Promise<void> };
+      const state = host.settings?.billing || host.settings;
+      if (!this.automaticWindowsEnabled() || !state || state.billingAccountLinked || state.flowWelcomeSeen || state.accountWelcomeSeen || state.billingOnboardingSeen || state.onboardingShown || host.settings.onboardingShown) return;
+      const persist = host.persist ? () => host.persist!() : host.saveSettings ? () => host.saveSettings!() : () => this.plugin.saveData(host.settings);
+      state.flowWelcomeSeen = true;
+      void diagnostics.guard("plugin-support.background_13", () => (persist().then(() => new DocumentationModal(this.plugin.app, this.docs, this.plugin, true).open()).catch((rejectedError1) => {
+diagnostics.failure("plugin-support.rejected_2", rejectedError1); state.flowWelcomeSeen = false; new Notice("Could not save setup progress. Your existing data is unchanged; reopen Help to continue."); })));
+
+});
+});
+  }
+
+  notifyFailure(_stage: string): void {
+    const now = Date.now();
+    if (now - this.lastFailureNotice < 5000) return;
+    this.lastFailureNotice = now;
+    try { new Notice(this.docs.name + ": this action could not be completed. Try again or copy the diagnostic log for support."); } catch (caughtError14) {
+}
   }
 
   info(event: string, detail?: unknown): void { this.record("info", event, detail); }
   warn(event: string, detail?: unknown): void { this.record("warn", event, detail); }
   error(event: string, detail?: unknown): void { this.record("error", event, detail); }
+
+  automaticWindowsEnabled(): boolean {
+    return (this.plugin as Plugin & { settings?: Record<string, any> }).settings?.autoShowOperationWindows === true;
+  }
+
+  addHelpSetting(containerEl: HTMLElement): void {
+    new Setting(containerEl).setName("Show automatic windows")
+      .setDesc("Open queue, progress, result, and welcome windows automatically. Off by default; status messages remain visible.")
+      .addToggle(toggle => toggle.setValue(this.automaticWindowsEnabled()).onChange(async enabled => {
+        const host = this.plugin as Plugin & { settings: Record<string, any>; persist?: () => Promise<void>; saveSettings?: () => Promise<void> };
+        const previous = host.settings.autoShowOperationWindows;
+        host.settings.autoShowOperationWindows = enabled;
+        try {
+          if (host.persist) await host.persist();
+          else if (host.saveSettings) await host.saveSettings();
+          else await host.saveData(host.settings);
+        } catch (error) {
+          host.settings.autoShowOperationWindows = previous;
+          toggle.setValue(this.automaticWindowsEnabled());
+          new Notice("Could not save the automatic windows preference. Try again.");
+        }
+      }));
+    new Setting(containerEl).setName("Help").setDesc("Get started, recover your account, or remove the plugin.")
+      .addButton(button => button.setButtonText("Open Help").onClick(() => diagnostics.guard("plugin-support.control_16", () => (new DocumentationModal(this.plugin.app, this.docs, this.plugin).open()))));
+  }
 
   addDiagnosticsSetting(containerEl: HTMLElement): void {
     new Setting(containerEl)
@@ -155,7 +263,10 @@ export class PluginSupport {
       .setDesc("Copy up to the latest 1,000 events recorded by this plugin. Logs reset when the plugin reloads. Note contents, paths, credentials, and raw error messages are excluded.")
       .addButton((button) => button
         .setButtonText("Copy full log")
-        .onClick(() => { void this.copyDiagnostics(); }));
+        .onClick(() => {
+return diagnostics.guard("plugin-support.control_17", () => { void diagnostics.guard("plugin-support.background_18", () => (this.copyDiagnostics()));
+});
+}));
   }
 
   private instrumentFutureCommands(addCommand: (command: Command) => Command): void {
@@ -166,9 +277,12 @@ export class PluginSupport {
       value: (command: Command) => addCommand(this.instrumentCommand(command)),
     });
     this.plugin.register(() => {
+return diagnostics.guard("plugin-support.event_19", () => {
       if (originalDescriptor) Object.defineProperty(this.plugin, "addCommand", originalDescriptor);
       else Reflect.deleteProperty(this.plugin, "addCommand");
-    });
+
+});
+});
   }
 
   private instrumentCommand(command: Command): Command {
@@ -180,42 +294,32 @@ export class PluginSupport {
       callback: command.callback ? instrument(command.callback) : undefined,
       editorCallback: command.editorCallback ? instrument(command.editorCallback) : undefined,
       checkCallback: command.checkCallback
-        ? (checking) => checking ? command.checkCallback!(checking) : this.trackCommand(command.id, () => command.checkCallback!(checking))
+        ? (checking) => this.trackCommand(command.id, () => command.checkCallback!(checking))
         : undefined,
       editorCheckCallback: command.editorCheckCallback
-        ? (checking, editor, context) => checking
-          ? command.editorCheckCallback!(checking, editor, context)
-          : this.trackCommand(command.id, () => command.editorCheckCallback!(checking, editor, context))
+        ? (checking, editor, context) => this.trackCommand(command.id, () => command.editorCheckCallback!(checking, editor, context))
         : undefined,
     };
   }
 
   private trackCommand<T>(commandId: string, action: () => T): T {
-    const startedAt = Date.now();
-    this.info("command.started", { operation: commandId });
-    try {
-      const result = action();
-      if (result && typeof (result as any).then === "function") {
-        return Promise.resolve(result).then(
-          (value) => {
-            this.info("command.completed", { operation: commandId, durationMs: Date.now() - startedAt });
-            return value;
-          },
-          (error) => {
-            this.error("command.failed", { operation: commandId, errorType: safeErrorType(error), durationMs: Date.now() - startedAt });
-            throw error;
-          },
-        ) as unknown as T;
-      }
-      this.info("command.completed", { operation: commandId, durationMs: Date.now() - startedAt });
-      return result;
-    } catch (error) {
-      this.error("command.failed", { operation: commandId, errorType: safeErrorType(error), durationMs: Date.now() - startedAt });
-      throw error;
-    }
+    const stage = "command." + (this.knownCommands.has(commandId) ? commandId : "custom");
+    return diagnostics.guard(stage, () => diagnostics.run(stage, action), false as T);
   }
 
   private record(level: LogEntry["level"], event: string, detail?: unknown): void {
+    const admittedEnd = event.endsWith(".end") && typeof (detail as { span?: unknown } | undefined)?.span === "number";
+    if (level === "info" && !this.debugEnabled() && !admittedEnd) return;
+    const now = Date.now();
+    const repeatKey = level + ":" + event;
+    const previous = this.repetitions.get(repeatKey);
+    if (!event.endsWith(".start") && !event.endsWith(".end") && previous && now - previous.at < 1000) {
+      previous.count++;
+      if (previous.count > 4) return;
+    } else {
+      if (this.repetitions.size >= 512) this.repetitions.delete(this.repetitions.keys().next().value!);
+      this.repetitions.set(repeatKey, { at: now, count: 1 });
+    }
     const safeEvent = /^[a-z0-9][a-z0-9._-]{0,99}$/i.test(event) ? event : "invalid_event";
     const entry: LogEntry = { at: new Date().toISOString(), level, event: safeEvent };
     if (detail !== undefined) entry.detail = safeDetail(detail);
@@ -226,7 +330,12 @@ export class PluginSupport {
       this.droppedEntries += removed;
     }
     const method = level === "error" ? console.error : level === "warn" ? console.warn : console.info;
-    method.call(console, "[" + this.docs.name + "] " + entry.event, entry.detail ?? "");
+    try {
+      const prefix = "[" + this.docs.name + " v" + this.plugin.manifest.version + "] " + entry.event;
+      if (isError(detail)) method.call(console, prefix, entry.detail ?? "", detail);
+      else method.call(console, prefix, entry.detail ?? "");
+    } catch (caughtError20) {
+ /* Console failures must not break plugin actions. */ }
   }
 
   async copyDiagnostics(): Promise<void> {
@@ -255,7 +364,8 @@ export class PluginSupport {
       const omitted = this.droppedEntries ? "; " + this.droppedEntries + " older events omitted" : "";
       new Notice(this.docs.name + ": copied " + snapshot.length + " log events" + omitted + ".");
     } catch (error) {
-      this.error("diagnostics.copy_failed", { errorType: safeErrorType(error) });
+diagnostics.failure("plugin-support.caught_22", error);
+      this.error("diagnostics.copy_failed", error);
       new Notice(this.docs.name + ": could not copy the debug log.");
     }
   }

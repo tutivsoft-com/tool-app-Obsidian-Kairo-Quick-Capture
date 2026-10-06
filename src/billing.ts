@@ -1,3 +1,4 @@
+import { diagnostics } from "./diagnostics";
 import { resumeAccountCheckout } from "./billing-checkout";
 import { refreshBillingSession } from "./constance-account";
 import { Notice } from "obsidian";
@@ -44,7 +45,7 @@ const billingLocks = new WeakMap<object, Promise<unknown>>();
 
 function withBillingLock<T>(plugin: BillingPlugin, work: () => Promise<T>): Promise<T> {
   const previous = billingLocks.get(plugin) ?? Promise.resolve();
-  const current = previous.catch(() => undefined).then(work);
+  const current = previous.catch((rejectedError1) => { diagnostics.failure("billing.rejected_2", rejectedError1); return (undefined); }).then(work);
   billingLocks.set(plugin, current);
   return current.finally(() => {
     if (billingLocks.get(plugin) === current) billingLocks.delete(plugin);
@@ -114,30 +115,43 @@ interface EntitlementSnapshot {
 }
 
 async function fetchEntitlements(plugin: BillingPlugin): Promise<EntitlementSnapshot> {
+const diagnosticEnd1 = diagnostics?.start?.("billing.fetchEntitlements") ?? (() => {});
+try {
+
   const response = await authenticatedBillingRequest(plugin.settings, () => plugin.persist(), {
     url: `${CONSTANCE_BASE_URL}/api/v1/billing/entitlements/me?${new URLSearchParams({ app_id: CONSTANCE_APP_ID, installation_id: plugin.settings.constanceDeviceId }).toString()}`,
     method: "GET",
     throw: false,
   });
-  if (response.status < 200 || response.status >= 300) throw new Error(`Entitlement sync failed: HTTP ${response.status}`);
+  if (response.status < 200 || response.status >= 300) throw new Error(`Your account could not be updated. Check your connection and try again.`);
   const data = response.json?.data;
   const freeUsage = data?.free_usage;
   const freeRemaining = Number(freeUsage?.remaining);
+  const paid = data?.credits?.total_available ?? data?.credits?.balance;
+  if (freeUsage?.remaining == null || !Number.isFinite(freeRemaining) || freeRemaining < 0 || paid == null || String(paid).trim() === "" || !Number.isFinite(Number(paid)) || Number(paid) < 0) throw new Error("Your balance could not be updated. Refresh it and try again.");
   const freeDay = typeof freeUsage?.period_key === "string" && /^\d{4}-\d{2}-\d{2}$/.test(freeUsage.period_key)
     ? freeUsage.period_key
     : undefined;
   return {
-    purchasedUses: Math.max(0, Number(data?.credits?.balance) || 0),
+    purchasedUses: Math.max(0, Number(data?.credits?.total_available ?? data?.credits?.balance) || 0),
     freeUsesRemaining: Number.isFinite(freeRemaining) ? Math.max(0, Math.min(FREE_USES_PER_DAY, Math.trunc(freeRemaining))) : undefined,
     freeUsesDay: freeDay,
   };
+
+} catch (diagnosticError1) { diagnostics?.failure?.("billing.fetchEntitlements", diagnosticError1); throw diagnosticError1; } finally { diagnosticEnd1(); }
 }
 
 export async function syncPurchasedUses(plugin: BillingPlugin, strict = false): Promise<void> {
+const diagnosticEnd2 = diagnostics?.start?.("billing.syncPurchasedUses") ?? (() => {});
+try {
+
   resumeAccountCheckout({ state: plugin.settings, appId: CONSTANCE_APP_ID, installationId: plugin.settings.constanceDeviceId,
     persist: () => plugin.persist(), syncBalance: () => syncPurchasedUses(plugin), refreshSession: () => refreshBillingSession(plugin.settings, () => plugin.persist()) });
 
-  return withBillingLock(plugin, async () => {
+  return await (withBillingLock(plugin, async () => {
+const diagnosticEnd3 = diagnostics?.start?.("billing.background.6074") ?? (() => {});
+try {
+
     if (!plugin.settings.constanceDeviceId) return;
     try {
       if (!plugin.settings.billingAccessToken || !plugin.settings.billingAccountLinked) { if (strict) throw new Error("Connect your account before refreshing."); return; }
@@ -147,13 +161,21 @@ export async function syncPurchasedUses(plugin: BillingPlugin, strict = false): 
       if (snapshot.freeUsesDay) plugin.settings.freeUsesDay = snapshot.freeUsesDay;
       await plugin.persist();
     } catch (error) {
-      console.error("Kairo: Constance entitlement sync failed", error);
+diagnostics.failure("billing.caught_extra_1", error);
+      diagnostics?.legacy?.("error", "billing.kairo_constance_entitlement_sync_failed");
       if (strict) throw error;
     }
-  });
+
+} catch (diagnosticError3) { diagnostics?.failure?.("billing.background.6074", diagnosticError3); throw diagnosticError3; } finally { diagnosticEnd3(); }
+}));
+
+} catch (diagnosticError2) { diagnostics?.failure?.("billing.syncPurchasedUses", diagnosticError2); throw diagnosticError2; } finally { diagnosticEnd2(); }
 }
 
 export async function retryPendingSpendEvents(plugin: BillingPlugin): Promise<void> {
+const diagnosticEnd4 = diagnostics?.start?.("billing.retryPendingSpendEvents") ?? (() => {});
+try {
+
   for (const pending of [...(plugin.settings.pendingSpendEvents ?? [])]) {
     const result = await spendConstanceUse(plugin, pending.eventId);
     if (result.kind === "error") break;
@@ -162,18 +184,31 @@ export async function retryPendingSpendEvents(plugin: BillingPlugin): Promise<vo
     plugin.settings.purchasedUses = result.kind === "ok" ? result.balance : 0;
     await plugin.persist();
   }
+
+} catch (diagnosticError4) { diagnostics?.failure?.("billing.retryPendingSpendEvents", diagnosticError4); throw diagnosticError4; } finally { diagnosticEnd4(); }
 }
 
 export async function spendConstanceUse(plugin: BillingPlugin, eventId = generateEventId()): Promise<SpendResult> {
+const diagnosticEnd5 = diagnostics?.start?.("billing.spendConstanceUse") ?? (() => {});
+try {
+
   const result = await spendAccountCredits({ state: plugin.settings, persist: () => plugin.persist(), appId: CONSTANCE_APP_ID, installationId: plugin.settings.constanceDeviceId, syncBalance: async () => {} }, CONSTANCE_APP_ID, plugin.settings.constanceDeviceId, eventId, 1);
   if (result.kind === "auth-required") { await clearBillingSession(plugin.settings, () => plugin.persist()); return { kind: "error" }; }
-  return result.kind === "ok" || result.kind === "insufficient" || result.kind === "error" ? result : { kind: "error" };
+  return await (result.kind === "ok" || result.kind === "insufficient" || result.kind === "error" ? result : { kind: "error" });
+
+} catch (diagnosticError5) { diagnostics?.failure?.("billing.spendConstanceUse", diagnosticError5); throw diagnosticError5; } finally { diagnosticEnd5(); }
 }
 
 export async function consumeCaptureUse(plugin: BillingPlugin, eventId = generateEventId()): Promise<boolean> {
-  return withBillingLock(plugin, async () => {
+const diagnosticEnd6 = diagnostics?.start?.("billing.consumeCaptureUse") ?? (() => {});
+try {
+
+  return await (withBillingLock(plugin, async () => {
+const diagnosticEnd7 = diagnostics?.start?.("billing.background.8276") ?? (() => {});
+try {
+
     if (!plugin.settings.billingAccessToken || !plugin.settings.billingAccountLinked) {
-      new Notice("Kairo: sign in or create a billing account in plugin settings before capturing.");
+      new Notice("Kairo: sign in or create an account in plugin settings before capturing.");
       return false;
     }
     if (plugin.settings.completedCaptureCharges?.includes(eventId)) return true;
@@ -202,7 +237,7 @@ export async function consumeCaptureUse(plugin: BillingPlugin, eventId = generat
     }
     if (free.kind === "auth-required") {
       await clearBillingSession(plugin.settings, () => plugin.persist());
-      new Notice("Kairo: your billing session expired. Sign in again in plugin settings.");
+      new Notice("Kairo: your session expired. Sign in again in plugin settings.");
       return false;
     }
     if (free.kind === "error") {
@@ -215,7 +250,7 @@ export async function consumeCaptureUse(plugin: BillingPlugin, eventId = generat
     plugin.settings.pendingSpendEvents = plugin.settings.pendingSpendEvents ?? [];
     await retryPendingSpendEvents(plugin);
     if (plugin.settings.pendingSpendEvents.length > 0) {
-      new Notice("Kairo: a previous capture spend is still being reconciled. Try again when the connection is restored.");
+      new Notice("Kairo: a previous charge is still being confirmed. Try again when connected.");
       return false;
     }
     plugin.settings.pendingSpendEvents.push({ eventId, amount: 1 });
@@ -232,21 +267,30 @@ export async function consumeCaptureUse(plugin: BillingPlugin, eventId = generat
       plugin.settings.purchasedUses = 0;
       plugin.settings.pendingSpendEvents = plugin.settings.pendingSpendEvents.filter((item) => item.eventId !== eventId);
       await plugin.persist();
-      new Notice("Kairo: no uses remain. Buy a use pack in plugin settings.");
+      new Notice("Kairo: no capture credits remain. Add credits in plugin settings.");
       return false;
     }
 
-    new Notice("Kairo: billing could not be verified. Nothing was captured.");
+    new Notice("Kairo: your account could not be verified. Nothing was captured.");
     return false;
-  });
+
+} catch (diagnosticError7) { diagnostics?.failure?.("billing.background.8276", diagnosticError7); throw diagnosticError7; } finally { diagnosticEnd7(); }
+}));
+
+} catch (diagnosticError6) { diagnostics?.failure?.("billing.consumeCaptureUse", diagnosticError6); throw diagnosticError6; } finally { diagnosticEnd6(); }
 }
 
 export async function pollAuthenticatedCheckout(plugin: BillingPlugin, checkoutId: string): Promise<boolean> {
+const diagnosticEnd8 = diagnostics?.start?.("billing.pollAuthenticatedCheckout") ?? (() => {});
+try {
+
   if (!plugin.settings.billingAccessToken || !plugin.settings.billingAccountLinked) return false;
   const response = await authenticatedBillingRequest(plugin.settings, () => plugin.persist(), {
     url: `${CONSTANCE_BASE_URL}/api/v1/billing/checkouts/${encodeURIComponent(checkoutId)}`,
     method: "GET",
     throw: false,
   });
-  return response.status >= 200 && response.status < 300 && response.json?.data?.settled === true;
+  return await (response.status >= 200 && response.status < 300 && response.json?.data?.settled === true);
+
+} catch (diagnosticError8) { diagnostics?.failure?.("billing.pollAuthenticatedCheckout", diagnosticError8); throw diagnosticError8; } finally { diagnosticEnd8(); }
 }
