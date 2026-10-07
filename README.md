@@ -1,30 +1,65 @@
 # Kairo Quick Capture
 
-Save quick captures locally and deliver them to a configured inbox or daily note, retaining queued work when delivery is unavailable.
+Save an idea immediately and deliver it to an Obsidian inbox or daily note.
 
-Current version: **3.4.64**.
+**Best for:** Obsidian users capturing ideas, links and small tasks during other work.
 
-## First use
+## Top 10 features
 
-Enable the plugin, click the Kairo pencil button in the left ribbon, and type your idea. No destination setup is required: the default is Inbox.md in the vault root. Ctrl+Shift+K (Cmd+Shift+K on macOS) also opens capture. Save keeps the window open; Save and close finishes the capture. Enter saves by default and follows the Close after saving preference. Ctrl+Enter (Cmd+Enter on macOS) or Shift+Enter adds a new line. Switch off Enter saves capture in settings to restore Enter for new lines and Ctrl/Cmd+Enter for saving.
+1. Open capture from the ribbon.
+2. Use a configurable global shortcut.
+3. Start with Inbox.md by default.
+4. Capture while Obsidian is minimized.
+5. Save without closing the window.
+6. Choose daily-note delivery.
+7. Keep a persistent local queue.
+8. Read or copy queued text.
+9. Retry pending delivery.
+10. Customize capture templates.
 
-A standard top-right notice appears once whenever Obsidian loads the vault. It shows your configured global shortcut (Ctrl+Shift+Space by default), explains that Obsidian must stay running and may be minimized, and includes Open capture. Plugin reloads do not repeat it. The same guidance is visible in Simple and Advanced settings under Capture from another app. The status bar opens capture or shows the number of saved captures waiting for delivery. Signed-out and offline captures are saved immediately in the queue, where you can read and copy their text. Connect your account when you want Kairo to deliver them to your note. Settings → Kairo Quick Capture → Open Help explains the flow; configuration is optional.
+## Example workflow
 
-Capture text is persisted locally before account delivery checks. Delivery uses the configured inbox or daily-note destination and a stable marker to avoid duplicate retries. Automatic delivery and creation of missing destinations default to on; saved opt-outs remain effective. Launch at login defaults off.
+**Before:** An idea arrives while another application is in focus.
 
-## Account and processing
+**After:** Open Kairo with its shortcut, save the idea and let it reach your configured note after account access is available.
 
-Processing is local. This plugin has no AI provider integration. Constance handles account and billing operations.
+## Pricing
 
-A completed delivered capture consumes one account capture unit. Vault delivery preserves reserve, write verification and idempotent recovery. Keeping a local queued capture is distinct from successful vault delivery.
+A connected account includes 5 delivered captures as a one-time lifetime allowance. Previous use counts toward that allowance.
 
-Connect the existing Constance account in settings; registration can require email verification before signing in again. Billing account passwords are sent for authentication and are not persisted. Access/refresh session data and a stable installation identity are saved locally. Account free usage and purchased balance are determined by Constance; cached values and checkout return URLs do not create entitlement. Catalog displays current formatted names, prices, availability and exact price IDs. Unknown usage and checkout results retain their original identities for recovery.
+| Pack | USD price | Included units |
+|---|---:|---:|
+| Starter | $2.00 | 50 captures |
+| Standard | $4.00 | 150 captures |
+| Pro | $8.00 | 450 captures |
+| Ultimate | $14.00 | 1,200 captures |
 
-## Diagnostics
+Packs are one-time purchases. Purchased units do not expire. Final tax and local currency are shown at checkout.
 
-Help is available in settings and through Open documentation. Open plugin settings and Copy diagnostic log are command-palette fallbacks. Debug logging defaults off for a new installation; failures and full Error objects/stacks still appear in the local developer console. Timed information is enabled by the debug preference. The copyable diagnostic buffer keeps at most 1,000 summarized events and excludes raw error text, stacks, note text, paths and credentials. Full console exceptions can contain whatever the failed operation placed in its error. Logs are not uploaded automatically.
+## What to know
 
-## Documentation
+Capture text is saved locally before delivery checks. Obsidian must remain running for the global shortcut.
 
+---
 
-License terms are in LICENSE.
+## Discover Kairo Quick Capture
+
+Whether you need to open capture from the ribbon or use a configurable global shortcut, Kairo Quick Capture provides a focused workflow for Obsidian users capturing ideas, links and small tasks during other work.
+
+### Common questions
+
+**What can I use it for?**
+
+You can open capture from the ribbon, capture while Obsidian is minimized or save without closing the window.
+
+**How do I get started?**
+
+Enable the plugin in Obsidian, open its settings and choose the action that fits your note. Connect your account for metered actions; the settings page shows your remaining allowance and available packs.
+
+### Search description
+
+Save an idea immediately and deliver it to an Obsidian inbox or daily note. Designed for Obsidian users capturing ideas, links and small tasks during other work.
+
+### Related topics
+
+Obsidian quick capture, global note shortcut, capture to daily note, persistent inbox queue.
