@@ -36,7 +36,7 @@ import { PluginSupport } from "./src/plugin-support";
 import { reserveNative, renderNativePacks, jobId, codePoints, recoverNative } from "./src/native-operations";
 import { addBillingAccountSettings } from "./src/constance-account";
 
-const VERSION = "3.4.63";
+const VERSION = "3.4.66";
 const DEFAULT_TEMPLATE = "- {{time}} — {{text}}\n";
 const DEFAULT_SETTINGS: KairoSettings = {
   settingsMode: "simple",
