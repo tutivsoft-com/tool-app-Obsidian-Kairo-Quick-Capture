@@ -1,3 +1,4 @@
+import { initializeMatomo } from "./matomo-plugin";
 import { selectedFiles, markdownFile, registerSelectionAction } from "./src/selection-scope";
 import { diagnostics } from "./src/diagnostics";
 import {
@@ -36,7 +37,7 @@ import { PluginSupport } from "./src/plugin-support";
 import { reserveNative, renderNativePacks, jobId, codePoints, recoverNative } from "./src/native-operations";
 import { addBillingAccountSettings } from "./src/constance-account";
 
-const VERSION = "3.4.66";
+const VERSION = "3.4.70";
 const DEFAULT_TEMPLATE = "- {{time}} — {{text}}\n";
 const DEFAULT_SETTINGS: KairoSettings = {
   settingsMode: "simple",
@@ -142,6 +143,7 @@ export default class KairoQuickCapturePlugin extends Plugin {
   private queueFlushPromise?: Promise<void>;
 
   async onload(): Promise<void> {
+    initializeMatomo(this);
 let diagnosticStartupEnd: () => void = () => {};
 
 const diagnosticEnd1 = diagnostics?.start?.("main.onload") ?? (() => {});

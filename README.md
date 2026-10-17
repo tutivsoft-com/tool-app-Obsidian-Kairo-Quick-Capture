@@ -64,12 +64,8 @@ Save an idea immediately and deliver it to an Obsidian inbox or daily note. Desi
 
 Obsidian quick capture, global note shortcut, capture to daily note, persistent inbox queue.
 
-<!-- PORTFOLIO-METADATA:START -->
-## Repository metadata
+## Release
 
-Current source version: **3.4.66** (2026-10-16).
+Version 3.4.71 is prepared for manual validation and publication.
 
-[Architecture](architecture.md) · [AI provenance](ai_model.md) · [History](HISTORY.md) · [Contributors](CONTRIBUTORS.md) · [Manifest](rahul_manifest.yaml).
-
-This maintenance update synchronizes source version metadata and excludes generated junk. Build, runtime, store and deployment verification are separate.
-<!-- PORTFOLIO-METADATA:END -->
+Basic app usage events are sent to https://atcdn.cyou without note contents. Account and purchase operations use Constance.
