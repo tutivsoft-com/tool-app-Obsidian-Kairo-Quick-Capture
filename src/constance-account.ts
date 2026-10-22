@@ -392,7 +392,7 @@ export function addBillingAccountSettings(containerEl: HTMLElement, adapter: Con
   let password = "";
   const section = containerEl.createDiv({ cls: "constance-account-billing-section" });
 
-  renderAccountGuidance(section, {appId:adapter.appId,connected:Boolean(adapter.state.billingAccountLinked && adapter.state.billingAccessToken),defaultAllowance:5,unit:"captures",workflow:"Start with 5 captures on your account. Free credits are used automatically before purchased credits."});
+  if (!adapter.state.billingAccountLinked) renderAccountGuidance(section, {appId:adapter.appId,connected:Boolean(adapter.state.billingAccountLinked && adapter.state.billingAccessToken),defaultAllowance:5,unit:"captures",workflow:"Start with 5 captures on your account. Free credits are used automatically before purchased credits."});
   section.createEl("h3", { text: "Account and billing" });
   const state = adapter.state as ConstanceAccountState & Record<string, unknown>;
   const accountStatus = adapter.state.billingAccountLinked
@@ -400,10 +400,6 @@ export function addBillingAccountSettings(containerEl: HTMLElement, adapter: Con
     : state.billingRegistrationPending
       ? `Registered as ${adapter.state.billingEmail} but not signed in. Check your email, click the confirmation link, then sign in here.`
       : "Not signed in.";
-  section.createEl("p", {
-    cls: "constance-account-status",
-    text: accountStatus,
-  });
 
   if (!adapter.state.billingAccountLinked) {
   new Setting(section)
@@ -427,11 +423,11 @@ try {
 }));
   new Setting(section)
     .setName("Password")
-    .setDesc("Your password is used to sign in and is not saved by the plugin.")
+    .setDesc("Used to sign in and never saved by the plugin. New accounts require at least 12 characters.")
     .addText((text) => {
       text.inputEl.type = "password";
       text.inputEl.maxLength = 256;
-      text.setPlaceholder("12 or more characters for a new account").onChange((value) => {
+      text.setPlaceholder("Password").onChange((value) => {
 return diagnostics.guard("constance-account.control_5", () => {
 const diagnosticAction16 = () => {
  password = value;
@@ -466,7 +462,7 @@ diagnostics.failure("constance-account.caught_7", error);
 
 });
 }); })
-    .addButton((button) => button.setButtonText("Sign out").setDisabled(!adapter.state.billingAccessToken).onClick(async () => {
+    .addButton((button) => { if (!adapter.state.billingAccountLinked) { button.buttonEl.remove(); return; } button.setButtonText("Sign out").setDisabled(!adapter.state.billingAccessToken).onClick(async () => {
 return diagnostics.guard("constance-account.control_8", async () => {
 const diagnosticEnd18 = diagnostics?.start?.("control.account.onClick") ?? (() => {});
 try {
@@ -484,7 +480,7 @@ diagnostics.failure("constance-account.rejected_2", rejectedError1);})));
 } catch (diagnosticError18) { diagnostics?.failure?.("control.account.onClick", diagnosticError18); throw diagnosticError18; } finally { diagnosticEnd18(); }
 
 });
-}));
+}); });
 
   if (!adapter.state.billingAccountLinked) {
     for (const [purpose, name] of [["reset", "Forgot password?"], ["verify", "Resend verification email"]] as const) {

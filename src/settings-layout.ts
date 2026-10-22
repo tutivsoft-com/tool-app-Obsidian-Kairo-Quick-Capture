@@ -28,7 +28,7 @@ function makeSection(root: HTMLElement, title: string, kind = "everyday"): HTMLE
 
 export function applySettingsLayout(root: HTMLElement, appId: string, appVersion?: string): void {
   if (root.querySelector(":scope > .ui-settings-section")) return;
-  root.addClass("ui-settings-layout");
+  root.addClass("ui-settings-layout", "kairo-quick-capture-settings");
   const nodes = Array.from(root.children) as HTMLElement[];
   const account = nodes.find(node => node.classList.contains("constance-account-billing-section"));
   let accountCard: HTMLElement | undefined;
@@ -36,6 +36,7 @@ export function applySettingsLayout(root: HTMLElement, appId: string, appVersion
     account.addClass("ui-settings-section", "ui-section-billing");
     const heading = account.querySelector(":scope > h3") as HTMLElement | null;
     heading?.addClass("ui-section-heading");
+    if (heading) heading.textContent = "Account";
     const content = Array.from(account.children).filter(node => node !== heading);
     accountCard = account.createDiv({ cls: "ui-settings-card" });
     content.forEach(node => accountCard!.appendChild(node));
@@ -66,7 +67,7 @@ export function applySettingsLayout(root: HTMLElement, appId: string, appVersion
     }
     const isHeading = /^H[1-4]$/.test(node.tagName) || node.classList.contains("setting-item-heading");
     if (isHeading) {
-      billingContext = /^Billing(?: & usage)?$/i.test(name);
+      billingContext = /^(?:Billing(?: & usage)?|Credits & billing)$/i.test(name);
       if (billingContext) { node.remove(); continue; }
       const kind = /recovery|privacy|diagnostic/i.test(name) ? "support" : /AI|quality|naming|capture|date|original files/i.test(name) ? "feature" : "everyday";
       current = makeSection(root, name, kind); node.remove(); continue;
@@ -76,7 +77,7 @@ export function applySettingsLayout(root: HTMLElement, appId: string, appVersion
       (node.classList.contains("setting-item") && billingLabels.test(name)) ||
       (billingContext && node.tagName === "P"))) {
       accountCard.appendChild(node);
-      if (node.tagName === "P") node.addClass("ui-billing-summary");
+      if (node.tagName === "P") { node.addClass("ui-billing-summary"); if (billingContext && !/summary/.test(node.className.replace(/ui-billing-summary/g, ""))) node.addClass("ui-credit-usage"); }
       continue;
     }
     billingContext = false;
@@ -84,8 +85,24 @@ export function applySettingsLayout(root: HTMLElement, appId: string, appVersion
     current.appendChild(node);
     if (node.tagName === "P") node.addClass("ui-section-note");
   }
+  // Account balances are status summaries, not purchase instructions.
+  root.querySelectorAll('[class*="summary"]').forEach(summary => {
+    if (!Array.from(summary.classList).some(cls => cls !== 'ui-billing-summary' && cls !== 'ui-credit-usage' && /(?:credit|balance|billing|usage).*summary/.test(cls))) return;
+    summary.classList.remove('ui-credit-usage');
+    if(accountCard && !accountCard.contains(summary))accountCard.appendChild(summary);
+  });
+  // Keep buying credits separate from account identity and balance.
+  const packs = accountCard?.querySelector('.ui-billing-packs');
+  let purchaseSection: HTMLElement | undefined;
+  if (packs) {
+    const purchaseCard = makeSection(root, 'Buy credits', 'billing');
+    accountCard?.querySelectorAll('.ui-credit-usage').forEach(note => purchaseCard.appendChild(note));
+    purchaseCard.appendChild(packs);
+    purchaseSection = purchaseCard.parentElement!;
+    account?.after(purchaseSection);
+  }
   // Support is deliberately last; it must not compete with setup or everyday controls.
-  if (viewSection) { if (account) account.after(viewSection); else if (title) title.after(viewSection); else root.prepend(viewSection); }
+  if (viewSection) { if (purchaseSection) purchaseSection.after(viewSection); else if (account) account.after(viewSection); else if (title) title.after(viewSection); else root.prepend(viewSection); }
   if (support) root.appendChild(support.parentElement!);
   for (const card of Array.from(root.querySelectorAll(".ui-settings-card"))) {
     if (!card.children.length) card.parentElement?.remove();

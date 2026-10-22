@@ -10,7 +10,7 @@ Install or update the plugin through Obsidian Community plugins, enable it, and 
 
 Connect your Constance account in plugin settings. If you create an account, confirm the email link and then connect again. Authentication, current offers, free allowance, purchased balance and payment confirmation use the Constance v2 service at https://app.tutivsoft.com.
 
-Current paid names, descriptions, prices, currencies and included units come from the payment provider through Constance. Refresh the displayed offers before buying. If current pricing cannot be verified, buying is unavailable. Only canonical payment fulfillment grants credits. A completed purchase stays saved until the refreshed balance is saved and acknowledged. Pending requests retain their original identity after a retry or restart. Use Check payment or Cancel current purchase in the billing section when needed.
+Current paid names, descriptions, prices, currencies and included units come from the payment provider through Constance. Refresh the displayed offers before buying. If current pricing cannot be verified, buying is unavailable. Only canonical payment fulfillment grants credits. A completed purchase stays saved until the refreshed balance is saved and acknowledged. Pending requests retain their original identity after a retry or restart. Account and Buy credits use separate theme-aware sections with standard Obsidian controls. Balance summaries stay with Account. Purchase progress and elapsed time appear directly below the offers. Automatic checks begin after three seconds, then every five seconds for up to five minutes. Check payment and Cancel current purchase are the only purchase-status actions. Completion requires canonical fulfillment, a saved refreshed balance and acknowledgement of the original purchase. A browser return or timer does not grant credits.
 
 New purchases use Paddle and USD. Existing historical purchases retain their original provider. No payment credentials are bundled in the plugin.
 
@@ -22,7 +22,7 @@ Uncertain older billing records are retained and are never replayed as new v2 ch
 
 ## Release
 
-Version 3.4.73 was published on 22 October 2026. Its exact-source preview and final Community release audit are Completed, and Current release shows 3.4.73. The matching GitHub release has main.js, manifest.json and styles.css with verified hashes.
+Version 3.4.77 contains the settings and payment-status improvements. Community review and publication are pending. Install the version currently offered by Obsidian Community plugins.
 
 ## Support
 

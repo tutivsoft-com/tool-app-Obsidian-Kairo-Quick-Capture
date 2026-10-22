@@ -301,7 +301,7 @@ function makeSection(root, title, kind = "everyday") {
 function applySettingsLayout(root, appId, appVersion) {
   var _a, _b;
   if (root.querySelector(":scope > .ui-settings-section")) return;
-  root.addClass("ui-settings-layout");
+  root.addClass("ui-settings-layout", "kairo-quick-capture-settings");
   const nodes = Array.from(root.children);
   const account = nodes.find((node) => node.classList.contains("constance-account-billing-section"));
   let accountCard;
@@ -309,6 +309,7 @@ function applySettingsLayout(root, appId, appVersion) {
     account.addClass("ui-settings-section", "ui-section-billing");
     const heading = account.querySelector(":scope > h3");
     heading == null ? void 0 : heading.addClass("ui-section-heading");
+    if (heading) heading.textContent = "Account";
     const content = Array.from(account.children).filter((node) => node !== heading);
     accountCard = account.createDiv({ cls: "ui-settings-card" });
     content.forEach((node) => accountCard.appendChild(node));
@@ -348,7 +349,7 @@ function applySettingsLayout(root, appId, appVersion) {
     }
     const isHeading = /^H[1-4]$/.test(node.tagName) || node.classList.contains("setting-item-heading");
     if (isHeading) {
-      billingContext = /^Billing(?: & usage)?$/i.test(name);
+      billingContext = /^(?:Billing(?: & usage)?|Credits & billing)$/i.test(name);
       if (billingContext) {
         node.remove();
         continue;
@@ -360,7 +361,10 @@ function applySettingsLayout(root, appId, appVersion) {
     }
     if (accountCard && (node.classList.contains("ui-billing-packs") || node.classList.contains("ui-billing-summary") || node.classList.contains("setting-item") && billingLabels.test(name) || billingContext && node.tagName === "P")) {
       accountCard.appendChild(node);
-      if (node.tagName === "P") node.addClass("ui-billing-summary");
+      if (node.tagName === "P") {
+        node.addClass("ui-billing-summary");
+        if (billingContext && !/summary/.test(node.className.replace(/ui-billing-summary/g, ""))) node.addClass("ui-credit-usage");
+      }
       continue;
     }
     billingContext = false;
@@ -368,8 +372,23 @@ function applySettingsLayout(root, appId, appVersion) {
     current.appendChild(node);
     if (node.tagName === "P") node.addClass("ui-section-note");
   }
+  root.querySelectorAll('[class*="summary"]').forEach((summary) => {
+    if (!Array.from(summary.classList).some((cls) => cls !== "ui-billing-summary" && cls !== "ui-credit-usage" && /(?:credit|balance|billing|usage).*summary/.test(cls))) return;
+    summary.classList.remove("ui-credit-usage");
+    if (accountCard && !accountCard.contains(summary)) accountCard.appendChild(summary);
+  });
+  const packs = accountCard == null ? void 0 : accountCard.querySelector(".ui-billing-packs");
+  let purchaseSection;
+  if (packs) {
+    const purchaseCard = makeSection(root, "Buy credits", "billing");
+    accountCard == null ? void 0 : accountCard.querySelectorAll(".ui-credit-usage").forEach((note) => purchaseCard.appendChild(note));
+    purchaseCard.appendChild(packs);
+    purchaseSection = purchaseCard.parentElement;
+    account == null ? void 0 : account.after(purchaseSection);
+  }
   if (viewSection) {
-    if (account) account.after(viewSection);
+    if (purchaseSection) purchaseSection.after(viewSection);
+    else if (account) account.after(viewSection);
     else if (title) title.after(viewSection);
     else root.prepend(viewSection);
   }
@@ -466,6 +485,7 @@ __export(billing_checkout_exports, {
   cancelAccountCheckout: () => cancelAccountCheckout,
   openAccountCheckout: () => openAccountCheckout,
   openAccountCheckoutByPrice: () => openAccountCheckoutByPrice,
+  prepareAccountCheckout: () => prepareAccountCheckout,
   recoverAccountCheckout: () => recoverAccountCheckout,
   resumeAccountCheckout: () => resumeAccountCheckout
 });
@@ -485,10 +505,175 @@ async function send(host, path, body) {
   if (response.status === 401 && await host.refreshSession()) response = await request();
   return response;
 }
+function prepareAccountCheckout(host) {
+  var _a, _b, _c, _d, _e, _f, _g, _h, _i;
+  const purchase = host.state.pendingAccountCheckout;
+  if (!purchase) return;
+  const previous = preparations.get(host.state);
+  if (previous) {
+    previous.stop = true;
+    clearTimeout(previous.timer);
+    clearTimeout(previous.expiry);
+    clearInterval(previous.displayTimer);
+  }
+  const preparation = { key: purchase.key, started: Date.now(), stop: false };
+  preparations.set(host.state, preparation);
+  const root = host.preparationRoot;
+  (_a = root == null ? void 0 : root.querySelector(".checkout-preparation")) == null ? void 0 : _a.remove();
+  const panel = root == null ? void 0 : root.createDiv({ cls: "checkout-preparation checkout-progress" });
+  const progress = (_b = panel == null ? void 0 : panel.createEl) == null ? void 0 : _b.call(panel, "progress");
+  progress == null ? void 0 : progress.setAttribute("aria-label", "Purchase in progress");
+  progress == null ? void 0 : progress.setAttribute("max", "3");
+  const steps = (_c = panel == null ? void 0 : panel.createEl) == null ? void 0 : _c.call(panel, "p", { text: "1. Open checkout / 2. Complete payment / 3. Verify access", cls: "checkout-progress-steps" });
+  let message = "Please wait while we prepare your secure payment link. Checkout will open automatically. You can cancel this purchase below.";
+  let checkButton, cancelButton;
+  const feedback = panel ? new import_obsidian4.Setting(panel).setName("Preparing your payment") : void 0;
+  const refreshMessage = () => {
+    const seconds = Math.max(0, Math.floor((Date.now() - preparation.started) / 1e3));
+    feedback == null ? void 0 : feedback.setDesc(`${message} Elapsed: ${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}.`);
+  };
+  feedback == null ? void 0 : feedback.descEl.setAttribute("role", "status");
+  feedback == null ? void 0 : feedback.descEl.setAttribute("aria-live", "polite");
+  feedback == null ? void 0 : feedback.addButton((button) => {
+    checkButton = button;
+    button.setButtonText("Check payment").onClick(async () => {
+      button.setDisabled(true);
+      try {
+        await recoverAccountCheckout(host, false);
+        if (!host.state.pendingAccountCheckout) finish(completedMessage());
+        else {
+          message = "Purchase status checked. We will keep checking for confirmation.";
+          refreshMessage();
+        }
+      } catch (error) {
+        diagnostics.failure("billing-checkout.check-view", error);
+        message = "Could not check payment yet. Your purchase is saved. Try Check payment again.";
+        refreshMessage();
+      } finally {
+        button.setDisabled(!host.state.pendingAccountCheckout);
+      }
+    });
+  }).addButton((button) => {
+    cancelButton = button;
+    button.setButtonText("Cancel current purchase").onClick(async () => {
+      button.setDisabled(true);
+      message = "Checking your purchase and requesting cancellation. Please wait.";
+      refreshMessage();
+      try {
+        await cancelAccountCheckout(host);
+        const pending = host.state.pendingAccountCheckout;
+        if (!pending) finish(completedMessage());
+        else {
+          message = pending.cancelRequested ? "Cancellation requested. Checking every 5 seconds for confirmation." : pending.status === "paid" ? "Payment received. Waiting for your balance update. Do not pay again." : "Cancellation is not confirmed yet. We will keep checking your original purchase.";
+          refreshMessage();
+        }
+      } catch (error) {
+        diagnostics.failure("billing-checkout.cancel-view", error);
+        finish("Cancellation could not be confirmed. Your purchase is saved. Use Check payment before buying again.", true);
+      } finally {
+        button.setDisabled(!host.state.pendingAccountCheckout || !!host.state.pendingAccountCheckout.cancelRequested || host.state.pendingAccountCheckout.status === "paid");
+      }
+    });
+  });
+  const finish = (text, canRetry = false) => {
+    preparation.stop = true;
+    clearTimeout(preparation.timer);
+    clearTimeout(expiry);
+    clearInterval(preparation.displayTimer);
+    preparations.delete(host.state);
+    message = text;
+    refreshMessage();
+    const completed = host.state.lastAccountCheckoutResult;
+    if (progress) {
+      if ((completed == null ? void 0 : completed.key) === preparation.key && completed.email === owner(host) && completed.fulfilled) {
+        progress.value = 3;
+        progress.setAttribute("aria-label", "Purchase complete");
+      } else progress.hidden = true;
+    }
+    if (checkButton) checkButton.setDisabled(!host.state.pendingAccountCheckout);
+    if (cancelButton) cancelButton.setDisabled(!host.state.pendingAccountCheckout || !!host.state.pendingAccountCheckout.cancelRequested || host.state.pendingAccountCheckout.status === "paid");
+    resumeAccountCheckout(host);
+  };
+  refreshMessage();
+  preparation.displayTimer = setInterval(() => {
+    if ((panel == null ? void 0 : panel.isConnected) === false) {
+      clearInterval(preparation.displayTimer);
+      return;
+    }
+    refreshMessage();
+  }, 1e3);
+  (_e = (_d = preparation.displayTimer).unref) == null ? void 0 : _e.call(_d);
+  (_f = panel == null ? void 0 : panel.scrollIntoView) == null ? void 0 : _f.call(panel, { block: "nearest" });
+  const completedMessage = () => {
+    const result = host.state.lastAccountCheckoutResult;
+    if ((result == null ? void 0 : result.key) === preparation.key && result.email === owner(host)) {
+      feedback == null ? void 0 : feedback.setName(result.fulfilled ? "Purchase complete" : "Purchase closed");
+      return result.fulfilled ? "Payment confirmed. Your balance has been updated. You can use your purchased credits now." : `Purchase ${result.status}. Check your balance before buying again.`;
+    }
+    return "Purchase status updated. Check your account balance.";
+  };
+  const tick = async () => {
+    var _a2, _b2;
+    if (preparation.stop) return;
+    const pending = host.state.pendingAccountCheckout;
+    if (!pending) {
+      finish(completedMessage());
+      return;
+    }
+    if (pending.key !== preparation.key || pending.email !== owner(host) || !host.state.billingAccountLinked) {
+      finish("Connect the purchasing account to check this payment.");
+      return;
+    }
+    if (!running.has(host.state)) {
+      const work = recoverAccountCheckout(host);
+      running.set(host.state, work);
+      try {
+        await work;
+      } catch (error) {
+        diagnostics.failure("billing-checkout.prepare", error);
+        message = "The payment service is taking longer. Your original purchase is saved. Please wait or cancel below.";
+        refreshMessage();
+      } finally {
+        if (running.get(host.state) === work) running.delete(host.state);
+      }
+    }
+    if (preparation.stop) return;
+    const current = host.state.pendingAccountCheckout;
+    if (!current) {
+      finish(completedMessage());
+      return;
+    }
+    if (current.key !== preparation.key || current.email !== owner(host) || !host.state.billingAccountLinked) {
+      finish("Connect the purchasing account to check this payment.");
+      return;
+    }
+    if (progress) {
+      if (current.opened || current.status === "paid") progress.value = current.status === "paid" ? 2 : 1;
+      else progress.removeAttribute("value");
+    }
+    feedback == null ? void 0 : feedback.setName(current.cancelRequested ? "Confirming cancellation" : current.status === "paid" ? "Verifying your payment" : current.opened ? "Waiting for payment confirmation" : "Preparing your payment");
+    message = current.cancelRequested ? "Cancellation requested. Checking every 5 seconds for confirmation." : current.status === "paid" ? "Payment received. Waiting for your balance update. Do not pay again." : current.opened ? "Complete payment in your browser. We check every 5 seconds and will show when your balance is updated. Do not pay again." : "Preparing your payment link. Checking every 5 seconds. You can cancel below.";
+    refreshMessage();
+    if (cancelButton) cancelButton.setDisabled(!!current.cancelRequested || current.status === "paid");
+    const remaining = 3e5 - (Date.now() - preparation.started);
+    if (remaining <= 0) {
+      finish("Confirmation is taking longer than five minutes. Use Check payment to continue checking this purchase. Do not pay again.", true);
+      return;
+    }
+    if (remaining <= 2e3) return;
+    preparation.timer = setTimeout(tick, Math.min(5e3, remaining));
+    (_b2 = (_a2 = preparation.timer).unref) == null ? void 0 : _b2.call(_a2);
+  };
+  const expiry = setTimeout(() => finish("Confirmation is taking longer than five minutes. Use Check payment to continue checking this purchase. Do not pay again.", true), 3e5);
+  preparation.expiry = expiry;
+  (_g = expiry.unref) == null ? void 0 : _g.call(expiry);
+  preparation.timer = setTimeout(tick, 3e3);
+  (_i = (_h = preparation.timer).unref) == null ? void 0 : _i.call(_h);
+}
 function resumeAccountCheckout(host) {
   var _a;
   const pending = host.state.pendingAccountCheckout;
-  if (!pending || legacyPending(host) || !host.state.billingAccountLinked || pending.email !== owner(host) || timers.has(host.state)) return;
+  if (!pending || legacyPending(host) || !host.state.billingAccountLinked || pending.email !== owner(host) || timers.has(host.state) || preparations.has(host.state)) return;
   const timer = setTimeout(() => {
     timers.delete(host.state);
     if (running.has(host.state)) {
@@ -501,11 +686,11 @@ function resumeAccountCheckout(host) {
       running.delete(host.state);
       resumeAccountCheckout(host);
     });
-  }, 15e3);
+  }, 6e4);
   timers.set(host.state, timer);
   (_a = timer.unref) == null ? void 0 : _a.call(timer);
 }
-async function recoverAccountCheckout(host, allowOpen = true) {
+async function recoverAccountCheckout(host, allowOpen = true, createOnly = false) {
   var _a, _b, _c, _d, _e;
   const pending = host.state.pendingAccountCheckout;
   if (!pending || legacyPending(host) || !host.state.billingAccountLinked || pending.email !== owner(host)) return;
@@ -540,6 +725,7 @@ async function recoverAccountCheckout(host, allowOpen = true) {
     pending.checkoutId = data2.checkout_id;
     await host.persist();
   }
+  if (createOnly) return;
   response = await send(host, `/checkouts/${encodeURIComponent(pending.checkoutId)}`);
   const data = (_d = response.json) == null ? void 0 : _d.data;
   if (!current() || response.status !== 200 || !validCheckout(data, host, pending) || data.checkout_id !== pending.checkoutId) return;
@@ -550,9 +736,11 @@ async function recoverAccountCheckout(host, allowOpen = true) {
   if (data.fulfillment_status === "fulfilled") {
     await host.syncBalance();
     if (!current()) return;
+    host.state.lastAccountCheckoutResult = { key: pending.key, email: pending.email, status: data.status, fulfilled: true };
     host.state.pendingAccountCheckout = null;
     await host.persist();
   } else if (["cancelled", "canceled", "failed", "expired", "voided", "rejected", "declined"].includes(data.status)) {
+    host.state.lastAccountCheckoutResult = { key: pending.key, email: pending.email, status: data.status, fulfilled: false };
     host.state.pendingAccountCheckout = null;
     await host.persist();
   } else if (allowOpen && data.status !== "paid" && !pending.cancelRequested && typeof data.checkout_url === "string" && /^https:\/\//.test(data.checkout_url) && !pending.opened) {
@@ -596,8 +784,9 @@ async function openAccountCheckout(host, plan) {
     }
     host.state.pendingAccountCheckout = saved || { version: 2, key: `checkout_${globalThis.crypto.randomUUID()}`, plan, email: owner(host), startedAt: Date.now() };
     if (saved) saved.opened = false;
+    prepareAccountCheckout(host);
     try {
-      await recoverAccountCheckout(host);
+      await recoverAccountCheckout(host, true, true);
     } catch (error) {
       diagnostics.failure("billing-checkout.open", error);
       new import_obsidian4.Notice("Checkout is still being confirmed. Retry the same purchase to recover it safely.");
@@ -657,7 +846,7 @@ async function cancelAccountCheckout(host) {
     running.delete(host.state);
   }
 }
-var import_obsidian4, running, timers, owner, openAccountCheckoutByPrice;
+var import_obsidian4, running, timers, owner, preparations, openAccountCheckoutByPrice;
 var init_billing_checkout = __esm({
   "src/billing-checkout.ts"() {
     "use strict";
@@ -667,6 +856,7 @@ var init_billing_checkout = __esm({
     running = /* @__PURE__ */ new WeakMap();
     timers = /* @__PURE__ */ new WeakMap();
     owner = (host) => host.state.billingEmail.trim().toLowerCase();
+    preparations = /* @__PURE__ */ new WeakMap();
     openAccountCheckoutByPrice = openAccountCheckout;
   }
 });
@@ -1090,14 +1280,10 @@ function addBillingAccountSettings(containerEl, adapter) {
   resumeAccountCheckout({ ...adapter, refreshSession: () => refreshBillingSession(adapter.state, adapter.persist) });
   let password = "";
   const section = containerEl.createDiv({ cls: "constance-account-billing-section" });
-  renderAccountGuidance(section, { appId: adapter.appId, connected: Boolean(adapter.state.billingAccountLinked && adapter.state.billingAccessToken), defaultAllowance: 5, unit: "captures", workflow: "Start with 5 captures on your account. Free credits are used automatically before purchased credits." });
+  if (!adapter.state.billingAccountLinked) renderAccountGuidance(section, { appId: adapter.appId, connected: Boolean(adapter.state.billingAccountLinked && adapter.state.billingAccessToken), defaultAllowance: 5, unit: "captures", workflow: "Start with 5 captures on your account. Free credits are used automatically before purchased credits." });
   section.createEl("h3", { text: "Account and billing" });
   const state = adapter.state;
   const accountStatus = adapter.state.billingAccountLinked ? `Signed in as ${adapter.state.billingEmail || "your account"}` : state.billingRegistrationPending ? `Registered as ${adapter.state.billingEmail} but not signed in. Check your email, click the confirmation link, then sign in here.` : "Not signed in.";
-  section.createEl("p", {
-    cls: "constance-account-status",
-    text: accountStatus
-  });
   if (!adapter.state.billingAccountLinked) {
     new import_obsidian5.Setting(section).setName("Email").setDesc("Use the email associated with your account and purchases.").addText((text) => text.setPlaceholder("you@example.com").setValue(adapter.state.billingEmail).setDisabled(adapter.state.billingAccountLinked).onChange(async (value) => {
       return diagnostics.guard("constance-account.control_4", async () => {
@@ -1119,10 +1305,10 @@ function addBillingAccountSettings(containerEl, adapter) {
         }
       });
     }));
-    new import_obsidian5.Setting(section).setName("Password").setDesc("Your password is used to sign in and is not saved by the plugin.").addText((text) => {
+    new import_obsidian5.Setting(section).setName("Password").setDesc("Used to sign in and never saved by the plugin. New accounts require at least 12 characters.").addText((text) => {
       text.inputEl.type = "password";
       text.inputEl.maxLength = 256;
-      text.setPlaceholder("12 or more characters for a new account").onChange((value) => {
+      text.setPlaceholder("Password").onChange((value) => {
         return diagnostics.guard("constance-account.control_5", () => {
           var _a;
           const diagnosticAction16 = () => {
@@ -1168,33 +1354,39 @@ function addBillingAccountSettings(containerEl, adapter) {
         }
       });
     });
-  }).addButton((button) => button.setButtonText("Sign out").setDisabled(!adapter.state.billingAccessToken).onClick(async () => {
-    return diagnostics.guard("constance-account.control_8", async () => {
-      var _a, _b, _c, _d, _e, _f;
-      const diagnosticEnd18 = (_c = (_b = (_a = diagnostics) == null ? void 0 : _a.start) == null ? void 0 : _b.call(_a, "control.account.onClick")) != null ? _c : (() => {
-      });
-      try {
-        const refreshToken = adapter.state.billingRefreshToken;
-        const accessToken = adapter.state.billingAccessToken;
-        clearBillingSession(adapter.state);
-        state.billingRegistrationPending = false;
-        await adapter.persist();
-        if (refreshToken) void diagnostics.guard("constance-account.background_9", () => {
-          var _a2, _b2, _c2;
-          return ((_c2 = (_b2 = (_a2 = diagnostics) == null ? void 0 : _a2.request) == null ? void 0 : _b2.call(_a2, "network.constance-account.addBillingAccountSettings", import_obsidian5.requestUrl, { url: `${CONSTANCE_API}/auth/logout`, method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` }, body: JSON.stringify({}), throw: false })) != null ? _c2 : (0, import_obsidian5.requestUrl)({ url: `${CONSTANCE_API}/auth/logout`, method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` }, body: JSON.stringify({}), throw: false })).catch((rejectedError1) => {
-            diagnostics.failure("constance-account.rejected_2", rejectedError1);
-          });
+  }).addButton((button) => {
+    if (!adapter.state.billingAccountLinked) {
+      button.buttonEl.remove();
+      return;
+    }
+    button.setButtonText("Sign out").setDisabled(!adapter.state.billingAccessToken).onClick(async () => {
+      return diagnostics.guard("constance-account.control_8", async () => {
+        var _a, _b, _c, _d, _e, _f;
+        const diagnosticEnd18 = (_c = (_b = (_a = diagnostics) == null ? void 0 : _a.start) == null ? void 0 : _b.call(_a, "control.account.onClick")) != null ? _c : (() => {
         });
-        new import_obsidian5.Notice("Signed out.");
-        (_d = adapter.refresh) == null ? void 0 : _d.call(adapter);
-      } catch (diagnosticError18) {
-        (_f = (_e = diagnostics) == null ? void 0 : _e.failure) == null ? void 0 : _f.call(_e, "control.account.onClick", diagnosticError18);
-        throw diagnosticError18;
-      } finally {
-        diagnosticEnd18();
-      }
+        try {
+          const refreshToken = adapter.state.billingRefreshToken;
+          const accessToken = adapter.state.billingAccessToken;
+          clearBillingSession(adapter.state);
+          state.billingRegistrationPending = false;
+          await adapter.persist();
+          if (refreshToken) void diagnostics.guard("constance-account.background_9", () => {
+            var _a2, _b2, _c2;
+            return ((_c2 = (_b2 = (_a2 = diagnostics) == null ? void 0 : _a2.request) == null ? void 0 : _b2.call(_a2, "network.constance-account.addBillingAccountSettings", import_obsidian5.requestUrl, { url: `${CONSTANCE_API}/auth/logout`, method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` }, body: JSON.stringify({}), throw: false })) != null ? _c2 : (0, import_obsidian5.requestUrl)({ url: `${CONSTANCE_API}/auth/logout`, method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` }, body: JSON.stringify({}), throw: false })).catch((rejectedError1) => {
+              diagnostics.failure("constance-account.rejected_2", rejectedError1);
+            });
+          });
+          new import_obsidian5.Notice("Signed out.");
+          (_d = adapter.refresh) == null ? void 0 : _d.call(adapter);
+        } catch (diagnosticError18) {
+          (_f = (_e = diagnostics) == null ? void 0 : _e.failure) == null ? void 0 : _f.call(_e, "control.account.onClick", diagnosticError18);
+          throw diagnosticError18;
+        } finally {
+          diagnosticEnd18();
+        }
+      });
     });
-  }));
+  });
   if (!adapter.state.billingAccountLinked) {
     for (const [purpose, name] of [["reset", "Forgot password?"], ["verify", "Resend verification email"]]) {
       new import_obsidian5.Setting(section).setName(name).addButton((button) => button.setButtonText("Send email").onClick(async () => {
@@ -2027,79 +2219,6 @@ init_diagnostics();
 init_constance_account();
 init_constance_v2();
 
-// src/billing-progress.ts
-function watchCheckoutProgress(host, state) {
-  var _a;
-  const doc = host.ownerDocument;
-  const panel = doc.createElement("section");
-  panel.className = "checkout-progress";
-  panel.hidden = true;
-  const title = doc.createElement("strong");
-  title.setAttribute("role", "status");
-  const elapsed = doc.createElement("time");
-  elapsed.setAttribute("role", "timer");
-  elapsed.setAttribute("aria-live", "off");
-  const top = doc.createElement("div");
-  top.className = "checkout-progress-top";
-  top.append(title, elapsed);
-  const bar = doc.createElement("progress");
-  bar.setAttribute("aria-label", "Purchase in progress");
-  const steps = doc.createElement("p");
-  steps.className = "checkout-progress-steps";
-  steps.textContent = "1. Open checkout / 2. Complete payment / 3. Verify access";
-  const detail = doc.createElement("p");
-  detail.setAttribute("role", "status");
-  const estimate = doc.createElement("p");
-  estimate.className = "checkout-progress-note";
-  panel.append(top, bar, steps, detail, estimate);
-  host.appendChild(panel);
-  const text = (el, value) => {
-    if (el.textContent !== value) el.textContent = value;
-  };
-  let seen = false, started = Date.now(), lastKey = "";
-  const refresh = () => {
-    const pending = state.pendingAccountCheckout;
-    const legacy = ["pendingPriceCheckout", "pendingPaddleCheckout", "previewPendingCheckout"].some((key) => !!state[key]);
-    if (legacy || pending && pending.version !== 2) {
-      elapsed.hidden = true;
-      panel.hidden = false;
-      seen = true;
-      bar.hidden = true;
-      text(title, "Purchase needs attention");
-      text(detail, "An older purchase is retained. Connect its account and check purchase history before buying again.");
-      text(estimate, "Contact support if this purchase cannot be confirmed.");
-    } else if (pending && state.billingAccountLinked && pending.email === state.billingEmail.trim().toLowerCase()) {
-      panel.hidden = false;
-      seen = true;
-      bar.hidden = false;
-      elapsed.hidden = false;
-      if (lastKey !== pending.key) {
-        const saved = Number(pending.startedAt), now = Date.now();
-        started = Number.isFinite(saved) && saved > 0 && saved <= now ? saved : now;
-        lastKey = pending.key;
-      }
-      const seconds = Math.max(0, Math.floor((Date.now() - started) / 1e3));
-      elapsed.textContent = "Elapsed " + Math.floor(seconds / 60) + ":" + String(seconds % 60).padStart(2, "0");
-      text(title, pending.cancelRequested ? "Cancellation is being confirmed" : pending.status === "paid" ? "Verifying your payment" : pending.opened ? "Continue in secure checkout" : "Preparing your secure checkout");
-      text(detail, pending.cancelRequested ? "Your purchase is retained until Constance confirms cancellation or payment. Check payment before buying again." : pending.status === "paid" ? "Your payment was received. Constance is verifying your access. Please do not pay again." : pending.opened ? "Complete payment in your browser. Your balance updates after Constance verifies your receipt. Please do not pay again while confirmation is pending." : "We are requesting your payment link. Please keep this view open while checkout starts. Your purchase is saved and can be recovered.");
-      text(estimate, seconds >= 180 ? "This is taking longer than the 3 minute estimate. Your provider may need more time. Use Check payment before trying again." : "Allow around 3 minutes for checkout and confirmation. This is an estimate; your bank or payment provider may take longer.");
-    } else if (seen) {
-      bar.hidden = true;
-      elapsed.hidden = true;
-      text(title, pending ? "Connect the purchasing account" : "Purchase status updated");
-      text(detail, "Review your account balance and purchase history for the confirmed result.");
-      text(estimate, "Use the billing controls to refresh your access or review your purchases.");
-    }
-  };
-  const timer = setInterval(() => {
-    if (panel.isConnected === false) clearInterval(timer);
-    else refresh();
-  }, 1e3);
-  (_a = timer.unref) == null ? void 0 : _a.call(timer);
-  refresh();
-  return { refresh };
-}
-
 // src/billing-catalog.ts
 init_diagnostics();
 var import_obsidian8 = require("obsidian");
@@ -2124,31 +2243,10 @@ function joinPublicPacks(products, appId) {
   });
 }
 function addLivePacks(root, host) {
-  const checkoutHost = { ...host, syncBalance: async () => {
+  const checkoutHost = { ...host, preparationRoot: void 0, syncBalance: async () => {
     await host.syncBalance();
   }, refreshSession: () => refreshBillingSession(host.state, host.persist) };
-  const progress = watchCheckoutProgress(root, host.state);
   resumeAccountCheckout(checkoutHost);
-  let recovery;
-  const showRecovery = () => {
-    if (recovery || !host.state.pendingAccountCheckout) return;
-    recovery = new import_obsidian8.Setting(root).setName("Current purchase").setDesc("Cancels an unpaid purchase so you can buy again. Completed purchases stay safe.").addButton((button) => button.setButtonText("Check payment").onClick(async () => {
-      button.setDisabled(true);
-      try {
-        await recoverAccountCheckout(checkoutHost);
-      } finally {
-        button.setDisabled(false);
-      }
-    })).addButton((button) => button.setButtonText("Cancel current purchase").onClick(async () => {
-      button.setDisabled(true);
-      try {
-        await cancelAccountCheckout(checkoutHost);
-      } finally {
-        button.setDisabled(false);
-      }
-    }));
-  };
-  showRecovery();
   let selectedCurrency = "USD";
   let renderOffers = () => {
   };
@@ -2162,6 +2260,8 @@ function addLivePacks(root, host) {
   });
   const status = section.createEl("p", { text: "Loading prices..." });
   const packs = section.createDiv();
+  checkoutHost.preparationRoot = section.createDiv({ cls: "checkout-payment-status" });
+  if (host.state.pendingAccountCheckout) prepareAccountCheckout(checkoutHost);
   void diagnostics.guard("billing-catalog.load", async () => {
     var _a;
     try {
@@ -2173,22 +2273,19 @@ function addLivePacks(root, host) {
         packs.empty();
         const matching = offers.filter((offer) => offer.pack.currency === selectedCurrency);
         status.setText(matching.length ? "Applicable taxes are calculated at checkout." : "No packs available in this currency.");
-        for (const { pack, priceId, units, unit, amount, available } of matching) {
-          new import_obsidian8.Setting(packs).setName(pack.name || "Credit offer").setDesc(`${pack.description || ""} ${units == null ? void 0 : units.toLocaleString()} ${unit}. Tax: ${pack.tax_mode || "shown at checkout"}.`).addButton((button) => button.setButtonText(available ? `Buy ${amount}` : "Pricing unavailable").setDisabled(!available).onClick(async () => {
+        for (const { pack, priceId, units, unit, amount, available } of matching.sort((a, b) => a.units - b.units)) {
+          new import_obsidian8.Setting(packs).setName(pack.name || "Credit offer").setDesc(`${pack.description ? pack.description.replace(/[.!?]$/, "") + ". " : ""}Applicable taxes are calculated at checkout.`).addButton((button) => button.setButtonText(available ? `Buy ${amount}` : "Pricing unavailable").setDisabled(!available || !host.state.billingAccountLinked).onClick(async () => {
             button.setDisabled(true);
             try {
-              const operation = openAccountCheckout(checkoutHost, priceId);
-              progress.refresh();
-              await operation;
+              await openAccountCheckout(checkoutHost, priceId);
             } finally {
-              progress.refresh();
-              button.setDisabled(!available);
-              showRecovery();
+              button.setDisabled(!available || !host.state.billingAccountLinked);
             }
           }));
         }
       };
       renderOffers();
+      if (!host.state.billingAccountLinked) status.setText("Connect your account above to buy credits. Applicable taxes are calculated at checkout.");
     } catch (error) {
       diagnostics.failure("billing-catalog.load", error);
       status.setText("Pricing temporarily unavailable. Refresh before buying.");
@@ -3521,7 +3618,7 @@ var KairoSettingTab = class extends import_obsidian10.PluginSettingTab {
         diagnosticStage46();
         const diagnosticStage47 = (_Ca = (_Ba = (_Aa = diagnostics) == null ? void 0 : _Aa.start) == null ? void 0 : _Ba.call(_Aa, "settings.render.stage_6")) != null ? _Ca : (() => {
         });
-        void diagnostics.guard("main.background_69", () => syncPurchasedUses(this.plugin).then(() => this.renderUsageSummary()).catch((rejectedError7) => {
+        if (this.plugin.settings.billingAccountLinked) void diagnostics.guard("main.background_69", () => syncPurchasedUses(this.plugin).then(() => this.renderUsageSummary()).catch((rejectedError7) => {
           diagnostics.failure("main.rejected_8", rejectedError7);
           return new import_obsidian10.Notice("Kairo: could not refresh balance. Use Refresh to retry.");
         }));

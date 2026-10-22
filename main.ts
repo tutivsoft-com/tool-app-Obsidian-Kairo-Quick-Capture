@@ -1038,7 +1038,7 @@ try {
 diagnosticStage46();
 
     const diagnosticStage47 = diagnostics?.start?.("settings.render.stage_6") ?? (() => {});
-void diagnostics.guard("main.background_69", () => (syncPurchasedUses(this.plugin).then(() => this.renderUsageSummary()).catch((rejectedError7) => { diagnostics.failure("main.rejected_8", rejectedError7); return (new Notice("Kairo: could not refresh balance. Use Refresh to retry.")); })));
+if (this.plugin.settings.billingAccountLinked) void diagnostics.guard("main.background_69", () => (syncPurchasedUses(this.plugin).then(() => this.renderUsageSummary()).catch((rejectedError7) => { diagnostics.failure("main.rejected_8", rejectedError7); return (new Notice("Kairo: could not refresh balance. Use Refresh to retry.")); })));
 diagnosticStage47();
 
 
