@@ -97,6 +97,7 @@ export interface KairoSettings {
 }
 
 interface QueuedCapture {
+  billingContractVersion?: number;
   id: string;
   createdAt: number;
   destination: string;
@@ -339,7 +340,7 @@ try {
     });
     // Save the idea before any account or network request. Delivery keeps the
     // existing reserve/write/verify/commit flow and reuses this capture ID.
-    const queued: QueuedCapture = { id, createdAt: now.getTime(), destination, entry, attempts: 0, billingPending: true, nativeReservation: true, inputCharacters: codePoints(trimmed), nativeSource: trimmed, nativeResult: `${entry}${entry.endsWith("\n") ? "" : "\n"}<!-- kairo:${id} -->\n`, billingOwner: this.settings.billingAccountLinked ? this.settings.billingEmail.trim().toLowerCase() : undefined };
+    const queued: QueuedCapture = { billingContractVersion: 2, id, createdAt: now.getTime(), destination, entry, attempts: 0, billingPending: true, nativeReservation: true, inputCharacters: codePoints(trimmed), nativeSource: trimmed, nativeResult: `${entry}${entry.endsWith("\n") ? "" : "\n"}<!-- kairo:${id} -->\n`, billingOwner: this.settings.billingAccountLinked ? this.settings.billingEmail.trim().toLowerCase() : undefined };
     this.queue.push(queued);
     try { await this.persist(); }
     catch (error) {
@@ -400,7 +401,7 @@ try {
           item.billingPending = false;
           await this.persist();
         }
-        const reservation = item.nativeReservation ? await reserveNative({app:this.app,settings:this.settings,persistNative:()=>this.persist()}, "kairo-quick-capture", `evt_${item.id}`, item.nativeSource || item.entry, item.nativeResult || item.entry, {input_characters:item.inputCharacters || codePoints(item.entry)}) : null;
+        const reservation = item.nativeReservation ? await reserveNative({app:this.app,settings:this.settings,persistNative:()=>this.persist()}, "kairo-quick-capture", item.billingContractVersion === 2 ? `v2native_${item.id}` : `evt_${item.id}`, item.nativeSource || item.entry, item.nativeResult || item.entry, {input_characters:item.inputCharacters || codePoints(item.entry)}) : null;
         if (item.nativeReservation && !reservation) throw new Error("This capture is awaiting account confirmation. Nothing has been delivered.");
         const writeNeeded=reservation ? await reservation.markWriting([{path:item.destination,marker:`<!-- kairo:${item.id} -->`}]) : true;
         if(writeNeeded)await this.appendSafely(item.destination, item.entry, item.id);

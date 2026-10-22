@@ -1,3 +1,5 @@
+import {syncEntitlements} from "./constance-v2";
+import {openAccountCheckout} from "./billing-checkout";
 import { diagnostics } from "./diagnostics";
 import { resumeAccountCheckout } from "./billing-checkout";
 import { refreshBillingSession } from "./constance-account";
@@ -66,7 +68,7 @@ export function generateSecureDeviceId(): string {
 export function generateEventId(): string {
   const bytes = new Uint8Array(12);
   window.crypto.getRandomValues(bytes);
-  return `evt_${Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+  return `v2consume_${Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
 }
 
 export function normalizeBillingSettings(settings: BillingSettings, date = new Date()): void {
@@ -119,7 +121,7 @@ const diagnosticEnd1 = diagnostics?.start?.("billing.fetchEntitlements") ?? (() 
 try {
 
   const response = await authenticatedBillingRequest(plugin.settings, () => plugin.persist(), {
-    url: `${CONSTANCE_BASE_URL}/api/v1/billing/entitlements/me?${new URLSearchParams({ app_id: CONSTANCE_APP_ID, installation_id: plugin.settings.constanceDeviceId }).toString()}`,
+    url: `${CONSTANCE_BASE_URL}/api/v2/billing/entitlements/me?${new URLSearchParams({ app_id: CONSTANCE_APP_ID, installation_id: plugin.settings.constanceDeviceId }).toString()}`,
     method: "GET",
     throw: false,
   });
@@ -142,50 +144,12 @@ try {
 }
 
 export async function syncPurchasedUses(plugin: BillingPlugin, strict = false): Promise<void> {
-const diagnosticEnd2 = diagnostics?.start?.("billing.syncPurchasedUses") ?? (() => {});
-try {
-
-  resumeAccountCheckout({ state: plugin.settings, appId: CONSTANCE_APP_ID, installationId: plugin.settings.constanceDeviceId,
-    persist: () => plugin.persist(), syncBalance: () => syncPurchasedUses(plugin), refreshSession: () => refreshBillingSession(plugin.settings, () => plugin.persist()) });
-
-  return await (withBillingLock(plugin, async () => {
-const diagnosticEnd3 = diagnostics?.start?.("billing.background.6074") ?? (() => {});
-try {
-
-    if (!plugin.settings.constanceDeviceId) return;
-    try {
-      if (!plugin.settings.billingAccessToken || !plugin.settings.billingAccountLinked) { if (strict) throw new Error("Connect your account before refreshing."); return; }
-      const snapshot = await fetchEntitlements(plugin);
-      plugin.settings.purchasedUses = snapshot.purchasedUses;
-      if (snapshot.freeUsesRemaining !== undefined) plugin.settings.freeUsesRemaining = snapshot.freeUsesRemaining;
-      if (snapshot.freeUsesDay) plugin.settings.freeUsesDay = snapshot.freeUsesDay;
-      await plugin.persist();
-    } catch (error) {
-diagnostics.failure("billing.caught_extra_1", error);
-      diagnostics?.legacy?.("error", "billing.kairo_constance_entitlement_sync_failed");
-      if (strict) throw error;
-    }
-
-} catch (diagnosticError3) { diagnostics?.failure?.("billing.background.6074", diagnosticError3); throw diagnosticError3; } finally { diagnosticEnd3(); }
-}));
-
-} catch (diagnosticError2) { diagnostics?.failure?.("billing.syncPurchasedUses", diagnosticError2); throw diagnosticError2; } finally { diagnosticEnd2(); }
+await syncEntitlements(plugin.settings,()=>plugin.persist());
+(plugin as any).refreshBillingSummary?.();
 }
 
 export async function retryPendingSpendEvents(plugin: BillingPlugin): Promise<void> {
-const diagnosticEnd4 = diagnostics?.start?.("billing.retryPendingSpendEvents") ?? (() => {});
-try {
-
-  for (const pending of [...(plugin.settings.pendingSpendEvents ?? [])]) {
-    const result = await spendConstanceUse(plugin, pending.eventId);
-    if (result.kind === "error") break;
-    if (result.kind === "ok") plugin.settings.completedCaptureCharges = [...new Set([...(plugin.settings.completedCaptureCharges ?? []), pending.eventId])];
-    plugin.settings.pendingSpendEvents = plugin.settings.pendingSpendEvents.filter((item) => item.eventId !== pending.eventId);
-    plugin.settings.purchasedUses = result.kind === "ok" ? result.balance : 0;
-    await plugin.persist();
-  }
-
-} catch (diagnosticError4) { diagnostics?.failure?.("billing.retryPendingSpendEvents", diagnosticError4); throw diagnosticError4; } finally { diagnosticEnd4(); }
+return;
 }
 
 export async function spendConstanceUse(plugin: BillingPlugin, eventId = generateEventId()): Promise<SpendResult> {
@@ -286,7 +250,7 @@ try {
 
   if (!plugin.settings.billingAccessToken || !plugin.settings.billingAccountLinked) return false;
   const response = await authenticatedBillingRequest(plugin.settings, () => plugin.persist(), {
-    url: `${CONSTANCE_BASE_URL}/api/v1/billing/checkouts/${encodeURIComponent(checkoutId)}`,
+    url: `${CONSTANCE_BASE_URL}/api/v2/billing/checkouts/${encodeURIComponent(checkoutId)}`,
     method: "GET",
     throw: false,
   });

@@ -18,7 +18,7 @@ const diagnosticAction1 = () => {
   const details = guide.createEl("details"); details.createEl("summary", { text: "About the allowance and purchases" });
   details.createEl("p", { text: host.workflow });
   details.createEl("p", { text: "Connect your account to load your free and purchased credits. Free credits are used first, then purchased credits. Your balance stays with your account after reinstalling. Current quantities and prices are shown in Account." });
-  void diagnostics.guard("account-guidance.background_1", () => ((diagnostics?.request?.("network.account-guidance.renderAccountGuidance", requestUrl, { url: `https://app.tutivsoft.com/api/v1/billing/policy?app_id=${encodeURIComponent(host.appId)}`, method: "GET", throw: false }) ?? requestUrl({ url: `https://app.tutivsoft.com/api/v1/billing/policy?app_id=${encodeURIComponent(host.appId)}`, method: "GET", throw: false })).then(response => {
+  void diagnostics.guard("account-guidance.background_1", () => ((diagnostics?.request?.("network.account-guidance.renderAccountGuidance", requestUrl, { url: `https://app.tutivsoft.com/api/v2/billing/policy?app_id=${encodeURIComponent(host.appId)}`, method: "GET", throw: false }) ?? requestUrl({ url: `https://app.tutivsoft.com/api/v2/billing/policy?app_id=${encodeURIComponent(host.appId)}`, method: "GET", throw: false })).then(response => {
     const p = response.status === 200 ? response.json?.data?.account_free_usage : null;
     if (!p || !Number.isFinite(p.allowance) || p.allowance < 0) return;
     const unit = String(p.unit).replace(/_/g, " ");
