@@ -298,7 +298,7 @@ function makeSection(root, title, kind = "everyday") {
   section.createEl("h3", { text: title, cls: "ui-section-heading" });
   return section.createDiv({ cls: "ui-settings-card" });
 }
-function applySettingsLayout(root, appId) {
+function applySettingsLayout(root, appId, appVersion) {
   var _a, _b;
   if (root.querySelector(":scope > .ui-settings-section")) return;
   root.addClass("ui-settings-layout");
@@ -390,6 +390,7 @@ function applySettingsLayout(root, appId) {
     (_b = row.querySelector(".setting-item-name")) == null ? void 0 : _b.appendChild(badge);
     marked++;
   }
+  if (appVersion) root.createEl("footer", { text: `Version ${appVersion}`, cls: "setting-item-description" });
 }
 var keySettings, appTitles;
 var init_settings_layout = __esm({
@@ -1220,7 +1221,7 @@ function addBillingAccountSettings(containerEl, adapter) {
       if (!section.contains(summary)) section.appendChild(summary);
     }
   });
-  queueMicrotask(() => applySettingsLayout(containerEl, adapter.appId));
+  queueMicrotask(() => applySettingsLayout(containerEl, adapter.appId, adapter.appVersion));
 }
 async function showAccountWelcome(plugin, state, persist) {
   var _a, _b, _c, _d, _e;
