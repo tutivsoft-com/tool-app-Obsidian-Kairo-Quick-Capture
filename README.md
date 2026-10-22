@@ -22,7 +22,7 @@ Uncertain older billing records are retained and are never replayed as new v2 ch
 
 ## Release
 
-Version 3.4.73 is prepared for the manual Community publication checks. A source push alone does not publish a plugin update. Installable updates use a matching version tag and the three assets main.js, manifest.json and styles.css.
+Version 3.4.73 was published on 22 October 2026. Its exact-source preview and final Community release audit are Completed, and Current release shows 3.4.73. The matching GitHub release has main.js, manifest.json and styles.css with verified hashes.
 
 ## Support
 
