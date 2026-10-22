@@ -26,7 +26,7 @@ function makeSection(root: HTMLElement, title: string, kind = "everyday"): HTMLE
   return section.createDiv({ cls: "ui-settings-card" });
 }
 
-export function applySettingsLayout(root: HTMLElement, appId: string): void {
+export function applySettingsLayout(root: HTMLElement, appId: string, appVersion?: string): void {
   if (root.querySelector(":scope > .ui-settings-section")) return;
   root.addClass("ui-settings-layout");
   const nodes = Array.from(root.children) as HTMLElement[];
@@ -103,4 +103,5 @@ export function applySettingsLayout(root: HTMLElement, appId: string): void {
     row.querySelector(".setting-item-name")?.appendChild(badge);
     marked++;
   }
+  if (appVersion) root.createEl("footer", { text: `Version ${appVersion}`, cls: "setting-item-description" });
 }

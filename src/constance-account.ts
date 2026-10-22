@@ -511,7 +511,7 @@ diagnostics.failure("constance-account.rejected_2", rejectedError1);})));
       if (!section.contains(summary)) section.appendChild(summary);
     }
   });
-  queueMicrotask(() => applySettingsLayout(containerEl, adapter.appId));
+  queueMicrotask(() => applySettingsLayout(containerEl, adapter.appId, adapter.appVersion));
 }
 
 /** A single welcome with an actionable setup link; account guidance stays in settings until connected. */
