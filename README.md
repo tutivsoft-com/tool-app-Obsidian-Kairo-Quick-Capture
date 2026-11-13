@@ -24,7 +24,7 @@ Uncertain older billing records are retained and are never replayed as new v2 ch
 
 Version 3.4.83: Capture delivery retains queued text and recovery, with refreshed balances and current diagnostics.
 
-Use the matching GitHub release for installation availability. Community directory review is separate from source validation.
+Obsidian Community release **3.4.83** requires Obsidian **1.5.0** or later. [GitHub release](https://github.com/tutivsoft-com/tool-app-Obsidian-Kairo-Quick-Capture/releases/tag/3.4.83).
 
 ## Support
 
