@@ -206,7 +206,7 @@ return diagnostics.guard("main.event_7", () => {
       this.showShortcutNotice();
       if (this.settings.automaticDeliveryApproved) void diagnostics.guard("main.background_8", () => (this.flushQueue(false)));
       void diagnostics.guard("main.background_9", () => (recoverNative({app:this.app,settings:this.settings,persistNative:()=>this.persist()})));
-      void diagnostics.guard("main.background_10", () => (syncPurchasedUses(this).then(() => retryPendingSpendEvents(this))));
+      if (this.settings.billingAccountLinked) void diagnostics.guard("main.background_10", () => (syncPurchasedUses(this).then(() => retryPendingSpendEvents(this))));
 
 });
 });
@@ -401,7 +401,7 @@ try {
           item.billingPending = false;
           await this.persist();
         }
-        const reservation = item.nativeReservation ? await reserveNative({app:this.app,settings:this.settings,persistNative:()=>this.persist()}, "kairo-quick-capture", item.billingContractVersion === 2 ? `v2native_${item.id}` : `evt_${item.id}`, item.nativeSource || item.entry, item.nativeResult || item.entry, {input_characters:item.inputCharacters || codePoints(item.entry)}) : null;
+        const reservation = item.nativeReservation ? await reserveNative({app:this.app,settings:this.settings,persistNative:()=>this.persist(),syncBalance:()=>syncPurchasedUses(this)}, "kairo-quick-capture", item.billingContractVersion === 2 ? `v2native_${item.id}` : `evt_${item.id}`, item.nativeSource || item.entry, item.nativeResult || item.entry, {input_characters:item.inputCharacters || codePoints(item.entry)}) : null;
         if (item.nativeReservation && !reservation) throw new Error("This capture is awaiting account confirmation. Nothing has been delivered.");
         const writeNeeded=reservation ? await reservation.markWriting([{path:item.destination,marker:`<!-- kairo:${item.id} -->`}]) : true;
         if(writeNeeded)await this.appendSafely(item.destination, item.entry, item.id);

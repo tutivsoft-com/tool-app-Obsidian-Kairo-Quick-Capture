@@ -22,7 +22,7 @@ const pendingStates=["requesting","reserved","writing","verified","uncertain_rel
 const owner=(host:NativeHost)=>host.settings.billingEmail.trim().toLowerCase();
 async function api(host:NativeHost,path:string,body?:unknown):Promise<any>{
   const response=await requestAuthenticatedBilling(host.settings,()=>host.persistNative(),{url:CONSTANCE_API+path,
-    method:body===undefined?"GET":"POST",throw:false,...(body===undefined?{}:{body:JSON.stringify(body)})});
+    method:body===undefined?"GET":"POST",throw:false,...(body===undefined?{}:{headers:{"Content-Type":"application/json"},body:JSON.stringify(body)})});
   if(response.status<200||response.status>=300||!response.json?.data)throw new Error("Your account could not be verified. Your saved operation will be retried safely.");
   return response.json.data;
 }
@@ -107,7 +107,7 @@ export async function reserveNative(host:NativeHost,appId:string,eventId:string,
         if(retained.state!=="writing"&&!reveal)throw new Error("The conversion has not been written.");
         if(!reveal&&!await writesMatch(host,retained))return {kind:"pending"};
         retained.state="verified";await host.persistNative();
-        try{if((await settle(host,retained,"commit")).state!=="committed")return {kind:"pending"};retained.state="committed";await host.persistNative();return {kind:"committed"};}
+        try{if((await settle(host,retained,"commit")).state!=="committed")return {kind:"pending"};retained.state="committed";await host.persistNative();try{await host.syncBalance?.();}catch(error){diagnostics.failure("native.balance-refresh",error);}return {kind:"committed"};}
         catch(error){diagnostics.failure("native.commit",error);return {kind:"pending"};}
       },
       rollback:async()=>{

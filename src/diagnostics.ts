@@ -1,5 +1,5 @@
 /** Timed stages, internal error propagation, and recovery at host callback boundaries. */
-type Sink = { info(event: string, detail?: unknown): void; error(event: string, detail?: unknown): void; notifyFailure?(stage: string): void };
+type Sink = { breadcrumb?(event: string): void; info(event: string, detail?: unknown): void; error(event: string, detail?: unknown): void; notifyFailure?(stage: string): void };
 let sink: Sink | undefined;
 let enabled: () => boolean = () => false;
 let span = 0;
@@ -25,6 +25,7 @@ export const diagnostics = {
   detach(target: Sink): void { if (sink === target) { sink = undefined; enabled = () => false; } },
   start(stage: string): () => void {
     try {
+      sink?.breadcrumb?.(stage + ".start");
       if (!sink || !enabled()) return noop;
       const started = performance.now();
       const previous = repetitions.get(stage);

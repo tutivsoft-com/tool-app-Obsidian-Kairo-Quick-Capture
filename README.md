@@ -16,13 +16,15 @@ New purchases use Paddle and USD. Existing historical purchases retain their ori
 
 ## Privacy and recovery
 
-Account requests send authentication and billing information to Constance. Passwords are not saved. Session credentials and recovery state are kept in local plugin settings. Billing requests do not contain note or image contents. The main processing workflow stays local. Basic app usage events use the existing analytics service without note contents. Diagnostic logs stay local unless you copy and share them.
+Account requests send authentication and billing information to Constance. Passwords are not saved. Session credentials and recovery state are kept in local plugin settings. Billing requests do not contain note or image contents. The main processing workflow stays local. Basic app usage events use the existing analytics service without note contents. The local diagnostic buffer is separate from automatic startup and plugin error reports sent to Datadog. Reports include the plugin version, platform, error details and recent action names. Credentials are redacted; details from a failed operation can include file paths or content.
 
 Uncertain older billing records are retained and are never replayed as new v2 charges. Connect the original account and contact support if an earlier operation needs recovery.
 
 ## Release
 
-Version 3.4.79 contains the settings and payment-status improvements. Its exact-source preview and final Community audit completed, and it is confirmed as Current release. Install or update through Obsidian Community plugins.
+Version 3.4.83: Capture delivery retains queued text and recovery, with refreshed balances and current diagnostics.
+
+Use the matching GitHub release for installation availability. Community directory review is separate from source validation.
 
 ## Support
 
