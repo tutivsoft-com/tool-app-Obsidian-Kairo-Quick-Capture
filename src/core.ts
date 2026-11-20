@@ -19,7 +19,10 @@ export function formatTimestamp(date: Date, format: string): string {
 }
 
 export function renderTemplate(template: string, context: TemplateContext): string {
-  return template.replace(/\{\{\s*(time|source|text|id)\s*\}\}/gi, (_, key: string) => {
+  const captureTemplate = /\{\{\s*text\s*\}\}/i.test(template)
+    ? template
+    : appendText(template, "{{text}}");
+  return captureTemplate.replace(/\{\{\s*(time|source|text|id)\s*\}\}/gi, (_, key: string) => {
     const normalized = key.toLowerCase() as keyof TemplateContext;
     return context[normalized];
   });

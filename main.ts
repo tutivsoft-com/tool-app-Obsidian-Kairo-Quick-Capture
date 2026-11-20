@@ -345,6 +345,7 @@ try {
     try { await this.persist(); }
     catch (error) {
 diagnostics.failure("main.caught_15", error); this.queue = this.queue.filter(item => item.id !== id); return { state: "failed", id, diagnostic: diagnosticSummary(destination, error, id) }; }
+    if (!this.settings.automaticDeliveryApproved) return { state: "queued", id };
     if (!this.settings.billingAccountLinked || !this.settings.billingAccessToken || window.navigator?.onLine === false) {
       return { state: "queued", id, diagnostic: "Saved locally. Delivery will resume when your account and connection are ready." };
     }
@@ -432,8 +433,13 @@ try {
 
     const path = this.destinationFor();
     if (!path) return { ok: false, path, reason: "Choose an inbox file or daily-note folder first." };
-    const folder = this.settings.vaultFolder ? this.app.vault.getAbstractFileByPath(normalizeVaultPath(this.settings.vaultFolder)) : null;
-    if (this.settings.vaultFolder && !(folder instanceof TFolder)) return { ok: false, path, reason: "Vault folder does not exist in the current vault." };
+    const parts = path.split("/");
+    let parentPath = "";
+    for (const part of parts.slice(0, -1)) {
+      parentPath = parentPath ? parentPath + "/" + part : part;
+      const parent = this.app.vault.getAbstractFileByPath(parentPath);
+      if (parent && !(parent instanceof TFolder)) return { ok: false, path, reason: parentPath + " is a file. Choose a folder instead." };
+    }
     const file = this.app.vault.getAbstractFileByPath(path);
     if (file && !(file instanceof TFile)) return { ok: false, path, reason: "The destination path is a folder, not a Markdown file." };
     if (!file && !this.settings.createMissing) return { ok: false, path, reason: "Destination is missing. Enable 'Create missing destinations' to allow creation." };
@@ -625,6 +631,7 @@ const diagnosticAction15 = () => {
     this.textarea.addEventListener("keydown", (event) => {
 return diagnostics.guard("main.event_35", () => {
       if (event.key === "Escape") { event.preventDefault(); this.close(); }
+      if (this.submitting) return;
       if (event.key !== "Enter" || event.isComposing || event.keyCode === 229 || event.altKey || event.shiftKey) return;
       const modified = event.ctrlKey || event.metaKey;
       const save = this.plugin.settings.enterSaves !== false ? !modified : modified;
@@ -653,6 +660,7 @@ try {
     if (this.submitting) return;
     if (!this.textarea.value.trim()) { this.status.setText("Enter some text first."); return; }
     this.submitting = true;
+    this.textarea.readOnly = true;
     this.status.setText("Saving…");
     try {
       const result = await this.plugin.capture(this.textarea.value);
@@ -664,7 +672,9 @@ try {
       } else if (result.state === "queued") {
         this.diagnostic = result.diagnostic;
         this.textarea.value = "";
-        const message = this.plugin.settings.billingAccountLinked
+        const message = this.plugin.settings.billingAccountLinked && !this.plugin.settings.automaticDeliveryApproved
+          ? "Saved locally. Open Queued captures and choose Retry delivery when ready."
+          : this.plugin.settings.billingAccountLinked
           ? "Saved locally — delivery is waiting. Open Queued captures to read or retry it."
           : "Saved locally — connect your account to deliver it. Open Queued captures to read or copy it.";
         this.status.setText(message);
@@ -681,6 +691,7 @@ try {
 diagnostics.failure("main.caught_38", error);
       this.status.setText(error instanceof Error ? error.message : "Could not save capture.");
     } finally {
+      this.textarea.readOnly = false;
       this.submitting = false;
     }
 
@@ -956,7 +967,7 @@ try {
 diagnosticStage40();
 
     const diagnosticStage41 = diagnostics?.start?.("settings.render.capture_template") ?? (() => {});
-if (advanced) new Setting(containerEl).setName("Capture template").setDesc("Use {{time}}, {{source}}, {{text}}, and {{id}}. The id marker prevents duplicate retries.").addTextArea((text) => text.setValue(this.plugin.settings.template).onChange(async (value) => {
+if (advanced) new Setting(containerEl).setName("Capture template").setDesc("Use {{time}}, {{source}}, {{text}}, and {{id}}. If you omit {{text}}, Kairo adds the capture text on the next line.").addTextArea((text) => text.setValue(this.plugin.settings.template).onChange(async (value) => {
 return diagnostics.guard("main.control_61", async () => {
 const diagnosticEnd60 = diagnostics?.start?.("control.capture_template.onChange") ?? (() => {});
 try {
