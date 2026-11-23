@@ -4,7 +4,9 @@ Capture text locally and deliver it to the configured inbox or daily note.
 
 ## Use
 
-Install or update the plugin through Obsidian Community plugins, enable it, and open its settings. Use the existing plugin commands for the selected note, text or files. Existing preferences and local recovery records are retained.
+Install or update Kairo Quick Capture through Community plugins in desktop Obsidian and enable it. Updates retain existing preferences and local recovery records. Run **Open quick capture** from the command palette, click the pencil icon in the ribbon, or press **Ctrl+Shift+K** (**Cmd+Shift+K** on macOS). To capture selected text or links to Markdown notes, use the Kairo actions in the editor or file menus.
+
+Captures save to a local queue, including offline. Connect your account and go online to deliver them to `Inbox.md` by default, or choose a different inbox or daily-note destination in settings. **Show queued captures** lets you read or copy pending captures. Use **Deliver queued captures** to retry delivery manually.
 
 ## Account and billing
 
@@ -24,8 +26,8 @@ Uncertain older billing records are retained and are never replayed as new v2 ch
 
 Fix capture saves, manual delivery, templates, and destination checks.
 
-Requires Obsidian 1.5.0 or later. [GitHub releases](https://github.com/tutivsoft-com/tool-app-Obsidian-Kairo-Quick-Capture/releases).
+Requires desktop Obsidian 1.5.0 or later. [GitHub release 3.4.84](https://github.com/tutivsoft-com/tool-app-Obsidian-Kairo-Quick-Capture/releases/tag/3.4.84).
 
 ## Support
 
-Use the plugin's Help or Open documentation command and the support links in its manifest. For a billing problem, retain the original purchase or operation identity and use the account portal. Do not share passwords or session tokens.
+Choose **Open Help** in the plugin settings or run **Open documentation** from the command palette. For a billing problem, retain the original purchase or operation identity and use the [Constance account portal](https://app.tutivsoft.com). Keep passwords and session tokens private.
